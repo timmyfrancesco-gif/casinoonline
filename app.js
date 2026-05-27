@@ -1340,24 +1340,26 @@ function showAuthErr(id, msg) {
   if (!svg || !head) return;
 
   /* Base positions of pupils in SVG viewbox coords */
-  const BASE_L  = { x: 133, y: 125 };
-  const BASE_R  = { x: 167, y: 125 };
+  const BASE_L  = { x: 136, y: 95 };
+  const BASE_R  = { x: 164, y: 95 };
   const HEAD_CX = 150; // head pivot X in viewbox
-  const HEAD_CY = 120; // head pivot Y in viewbox
+  const HEAD_CY = 88;  // head pivot Y in viewbox
 
   /* Spring state */
-  let tHeadRot = 0, cHeadRot = 0, vHeadRot = 0; // Y-axis rotation (°)
-  let tHeadTilt = 0, cHeadTilt = 0, vHeadTilt = 0; // X-axis tilt (°)
+  let tHeadRot = 0, cHeadRot = 0, vHeadRot = 0;
+  let tHeadTilt = 0, cHeadTilt = 0, vHeadTilt = 0;
   let tPupX = 0, cPupX = 0, vPupX = 0;
   let tPupY = 0, cPupY = 0, vPupY = 0;
   let tBodyX = 0, cBodyX = 0, vBodyX = 0;
 
-  /* Spring constants */
-  const K_HEAD  = 0.055; const D_HEAD  = 0.76;
-  const K_EYE   = 0.10;  const D_EYE   = 0.72;
-  const K_BODY  = 0.030; const D_BODY  = 0.82;
+  /* Spring constants — fast/snappy for responsive feel */
+  const K_HEAD  = 0.14; const D_HEAD  = 0.62;
+  const K_EYE   = 0.18; const D_EYE   = 0.63;
+  const K_BODY  = 0.055; const D_BODY = 0.78;
 
   let breathT = 0;
+  let idleT = 0;
+  let lastMoveTime = 0;
 
   document.addEventListener('mousemove', e => {
     /* Map mouse to SVG viewbox space */
@@ -1380,10 +1382,23 @@ function showAuthErr(id, msg) {
     tPupY = Math.max(-3.0, Math.min(3.0, dy * 0.012));
     /* Body lean */
     tBodyX = Math.max(-4, Math.min(4, dx * 0.012));
+    lastMoveTime = Date.now();
   });
 
   function tick() {
     breathT += 0.016;
+    idleT   += 0.016;
+
+    /* ── Idle drift when no mouse movement for >1.5 s ── */
+    const idleSecs = (Date.now() - lastMoveTime) / 1000;
+    if (idleSecs > 1.5) {
+      const blend = Math.min((idleSecs - 1.5) / 1.5, 1);
+      tHeadRot  = Math.sin(idleT * 0.41) * 14 * blend;
+      tHeadTilt = Math.cos(idleT * 0.29) * 7  * blend;
+      tPupX     = Math.sin(idleT * 0.73) * 3.8 * blend;
+      tPupY     = Math.cos(idleT * 0.53) * 2.2 * blend;
+      tBodyX    = Math.sin(idleT * 0.22) * 3   * blend;
+    }
 
     /* ── Spring physics for all values ── */
     vHeadRot  = (vHeadRot  + (tHeadRot  - cHeadRot)  * K_HEAD) * D_HEAD;
