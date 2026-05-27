@@ -80,43 +80,72 @@ async function getProductPage(url) {
   return { title, images, weight, price, variants };
 }
 
-/* Platform-specific API attempts */
+/* Platform-specific page scraping + API attempts */
 async function tryPlatformAPI(url) {
+  /* ══ Helper: try page HTML first (always accessible, no auth needed) ══ */
+  const tryPage = async (pageUrl, referer) => {
+    const html = await getBrowserLike(pageUrl, referer || pageUrl, 10000);
+    if (!html || html.length < 500) return null;
+    const ssr = extractSSR(html);
+    const doc = parse(html);
+    const title    = (ssr ? deepFind(ssr, ['name','title','productName','goodsName','itemName','spu_name','goods_name','spuName']) : '') || pickTitle(doc, html);
+    const imgs     = [...new Set([...(ssr ? deepImages(ssr) : []), ...pickImages(doc, html)])].slice(0, 8);
+    const weight   = parseFloat(ssr ? deepFind(ssr, ['weight','estimatedWeight','weightGram']) : '') || pickWeight(doc.body?.textContent || '') || 0;
+    const price    = parseFloat(ssr ? deepFind(ssr, ['price','salePrice','sellPrice','cnyPrice','yuan_price']) : '') || pickPrice(doc.body?.textContent || '') || 0;
+    const variants = pickVariants(ssr, doc);
+    if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight, price, variants };
+    return null;
+  };
+
   /* ── CNFans ── */
   if (url.includes('cnfans.com')) {
+    /* Page first (Nuxt SSR — __NUXT__ has full product data) */
+    const page = await tryPage(url, 'https://www.cnfans.com/');
+    if (page?.title || page?.images?.length) return page;
+
+    /* API fallback */
     const id = new URL(url).searchParams.get('id');
     if (id) {
       for (const api of [
         `https://cnfans.com/api/ware/waresinfo?ware_id=${id}`,
         `https://cnfans.com/api/goods/detail?id=${id}`,
-        `https://cnfans.com/index.php?route=product/product/getInfo&goods_id=${id}`,
       ]) {
         const data = await getJSON(api);
-        if (data) {
-          const p = data.data || data.result || data;
-          const title = p.goods_name || p.name || p.title || '';
-          const imgs = [];
-          if (p.goods_images) {
-            (Array.isArray(p.goods_images) ? p.goods_images : [p.goods_images])
-              .forEach(i => { if (typeof i === 'string') imgs.push(i); else if (i?.img_url) imgs.push(i.img_url); });
-          }
-          if (p.image) imgs.push(p.image);
-          const variants = extractVariantsFromAPI(p);
-          if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || p.sell_price || 0, variants };
-        }
+        if (!data) continue;
+        const p = data.data || data.result || data;
+        const title = p.goods_name || p.name || p.title || '';
+        const imgs = [];
+        if (p.goods_images) (Array.isArray(p.goods_images) ? p.goods_images : [p.goods_images]).forEach(i => { if (typeof i === 'string') imgs.push(i); else if (i?.img_url) imgs.push(i.img_url); });
+        if (p.image) imgs.push(p.image);
+        const variants = extractVariantsFromAPI(p);
+        if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || p.sell_price || 0, variants };
       }
     }
   }
 
   /* ── OopBuy ── */
   if (url.includes('oopbuy.com')) {
-    const m = url.match(/\/detail\/([^/?#]+)/);
-    if (m) {
-      const data = await getJSON(`https://www.oopbuy.com/api/product/detail?id=${m[1]}`);
-      if (data) {
-        const p = data.data || data;
-        const title = p.name || p.product_name || '';
-        const imgs = (p.images || p.gallery || []).map(i => typeof i === 'string' ? i : i.url || '').filter(Boolean);
+    /* Page first — OopBuy is Next.js, __NEXT_DATA__ has all product info */
+    const page = await tryPage(url, 'https://www.oopbuy.com/');
+    if (page?.title || page?.images?.length) return page;
+
+    /* API fallback — try multiple ID extraction patterns */
+    const idFromPath  = url.match(/\/detail\/([^/?#]+)/)?.[1] || url.match(/\/product\/([^/?#]+)(?:[/?#]|$)/)?.[1];
+    const idFromQuery = new URL(url).searchParams.get('id') || new URL(url).searchParams.get('productId') || new URL(url).searchParams.get('itemId');
+    const id = idFromPath || idFromQuery;
+    if (id) {
+      for (const api of [
+        `https://www.oopbuy.com/api/product/detail?id=${id}`,
+        `https://www.oopbuy.com/api/item/detail?itemId=${id}`,
+        `https://www.oopbuy.com/api/goods/detail?id=${id}`,
+      ]) {
+        const data = await getJSON(api);
+        if (!data) continue;
+        const p = data.data || data.result || data;
+        const title = p.name || p.product_name || p.goodsName || p.title || '';
+        const imgData = p.images || p.gallery || p.picList || p.imageList || [];
+        const imgs = (Array.isArray(imgData) ? imgData : [imgData]).map(i => typeof i === 'string' ? i : i?.url || i?.src || '').filter(Boolean);
+        if (p.mainPic || p.mainImg) imgs.unshift(p.mainPic || p.mainImg);
         const variants = extractVariantsFromAPI(p);
         if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || 0, variants };
       }
@@ -125,11 +154,13 @@ async function tryPlatformAPI(url) {
 
   /* ── Pandabuy ── */
   if (url.includes('pandabuy.com')) {
-    const u = new URL(url);
-    const id = u.searchParams.get('id') || u.searchParams.get('itemId');
+    /* Page first (Next.js SSR) */
+    const page = await tryPage(url, 'https://www.pandabuy.com/');
+    if (page?.title || page?.images?.length) return page;
 
+    /* _next/data attempt */
+    const id = new URL(url).searchParams.get('id') || new URL(url).searchParams.get('itemId');
     if (id) {
-      /* Next.js _next/data */
       try {
         const home = await get('https://www.pandabuy.com/', 5000);
         const bid = home?.match(/"buildId"\s*:\s*"([^"]+)"/)?.[1];
@@ -145,89 +176,46 @@ async function tryPlatformAPI(url) {
           }
         }
       } catch {}
-
-      /* Direct API candidates */
-      for (const api of [
-        `https://www.pandabuy.com/api/pandabuy-goods/detail?id=${id}`,
-        `https://www.pandabuy.com/api/goods/detail?id=${id}`,
-        `https://www.pandabuy.com/api/detail?id=${id}`,
-      ]) {
-        const data = await getJSON(api, 6000);
-        if (data) {
-          const p = data.data || data.result || data;
-          const title = p.name || p.title || p.productName || p.goodsName || '';
-          const imgData = p.images || p.imageList || p.picList || p.pics || [];
-          const imgs = (Array.isArray(imgData) ? imgData : [imgData])
-            .map(i => typeof i === 'string' ? i : i?.url || i?.src || i?.img || '')
-            .filter(Boolean);
-          if (p.mainImg) imgs.unshift(p.mainImg);
-          const variants = extractVariantsFromAPI(p);
-          if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || p.salePrice || 0, variants };
-        }
-      }
-    }
-
-    /* SSR fallback */
-    const html = await get(url, 8000);
-    if (html) {
-      const ssr = extractSSR(html);
-      if (ssr) {
-        const title = deepFind(ssr, ['name','title','productName','goodsName']) || '';
-        const imgs  = deepImages(ssr);
-        if (title || imgs.length) {
-          const doc = parse(html);
-          return { title: title || pickTitle(doc, html), images: imgs.slice(0, 6), weight: pickWeight(doc.body?.textContent || ''), price: pickPrice(doc.body?.textContent || ''), variants: pickVariants(ssr, doc) };
-        }
-      }
     }
   }
 
   /* ── Sugargoo ── */
   if (url.includes('sugargoo.com')) {
+    /* Page first */
+    const page = await tryPage(url, 'https://www.sugargoo.com/');
+    if (page?.title || page?.images?.length) return page;
+
+    /* Sugargoo uses hash routing: extract productLink from hash */
     const hash = url.split('#')[1] || '';
     const plMatch = hash.match(/[?&]productLink=([^&]+)/);
     const productLink = plMatch ? decodeURIComponent(plMatch[1]) : '';
     const apiTarget = productLink || url;
 
-    for (const api of [
+    const apiHtml = await getBrowserLike(
       `https://www.sugargoo.com/index/item/index.html?language=en&productLink=${encodeURIComponent(apiTarget)}`,
-      `https://www.sugargoo.com/index/product/detail?url=${encodeURIComponent(apiTarget)}`,
-    ]) {
-      const html = await get(api, 8000);
-      if (html && html.length > 2000) {
-        const doc = parse(html);
-        const ssr = extractSSR(html);
-        const title  = (ssr ? deepFind(ssr, ['name','title','productName','goodsName']) : '') || pickTitle(doc, html);
-        const imgs   = [...new Set([...(ssr ? deepImages(ssr) : []), ...pickImages(doc, html)])].slice(0, 6);
-        const variants = pickVariants(ssr, doc);
-        if (title || imgs.length) return { title, images: imgs, weight: pickWeight(doc.body?.textContent || ''), price: pickPrice(doc.body?.textContent || ''), variants };
-      }
-    }
-
-    const jsonData = await getJSON(`https://www.sugargoo.com/api/item/getDetail?productLink=${encodeURIComponent(apiTarget)}`, 7000);
-    if (jsonData) {
-      const p = jsonData.data || jsonData;
-      const title = p.title || p.name || p.productName || '';
-      const imgData = p.images || p.imageList || p.gallery || [];
-      const imgs = (Array.isArray(imgData) ? imgData : [imgData]).map(i => typeof i === 'string' ? i : i?.url || '').filter(Boolean);
-      const variants = extractVariantsFromAPI(p);
-      if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || 0, variants };
+      'https://www.sugargoo.com/', 8000
+    );
+    if (apiHtml && apiHtml.length > 2000) {
+      const doc = parse(apiHtml);
+      const ssr = extractSSR(apiHtml);
+      const title = (ssr ? deepFind(ssr, ['name','title','productName','goodsName']) : '') || pickTitle(doc, apiHtml);
+      const imgs  = [...new Set([...(ssr ? deepImages(ssr) : []), ...pickImages(doc, apiHtml)])].slice(0, 6);
+      if (title || imgs.length) return { title, images: imgs, weight: pickWeight(doc.body?.textContent || ''), price: pickPrice(doc.body?.textContent || ''), variants: pickVariants(ssr, doc) };
     }
   }
 
   /* ── Hagobuy ── */
   if (url.includes('hagobuy.com')) {
-    const id = new URL(url).searchParams.get('id') || new URL(url).searchParams.get('productId');
-    if (id) {
-      const data = await getJSON(`https://www.hagobuy.com/api/product/detail?id=${id}`, 6000);
-      if (data) {
-        const p = data.data || data;
-        const title = p.name || p.title || '';
-        const imgs = (p.images || p.gallery || []).map(i => typeof i === 'string' ? i : i?.url || '').filter(Boolean);
-        const variants = extractVariantsFromAPI(p);
-        if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || 0, variants };
-      }
-    }
+    const page = await tryPage(url, 'https://www.hagobuy.com/');
+    if (page?.title || page?.images?.length) return page;
+  }
+
+  /* ── AllChinaBuy / Mulebuy / Acbuy / Cssbuy ── */
+  const genericHosts = ['allchinabuy.com','mulebuy.com','acbuy.com','cssbuy.com','orientdig.com'];
+  if (genericHosts.some(h => url.includes(h))) {
+    const host = new URL(url).origin;
+    const page = await tryPage(url, host + '/');
+    if (page?.title || page?.images?.length) return page;
   }
 
   return null;
@@ -607,6 +595,31 @@ async function get(url, ms = 9000) {
       redirect: 'follow',
     });
     return r.ok ? await r.text() : null;
+  } catch { return null; }
+}
+
+/* Full browser-like fetch with Referer + sec-fetch headers (bypasses basic bot checks) */
+async function getBrowserLike(url, referer, ms = 10000) {
+  try {
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': referer || url,
+        'Cache-Control': 'max-age=0',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': referer ? 'same-origin' : 'none',
+        'Sec-Fetch-User': '?1',
+      },
+      signal: AbortSignal.timeout(ms),
+      redirect: 'follow',
+    });
+    if (!r.ok) return null;
+    return await r.text();
   } catch { return null; }
 }
 
