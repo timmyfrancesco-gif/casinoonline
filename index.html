@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OrderVault — Gestione Ordini Futuristica</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<!-- ─── CANVAS PARTICELLE ─── -->
+<canvas id="particles"></canvas>
+
+<!-- ─── SCAN LINE OVERLAY ─── -->
+<div class="scanlines"></div>
+<div class="vignette"></div>
+
+<!-- ════════════════════════════════════════════
+     SCHERMATA HOME
+     ════════════════════════════════════════════ -->
+<div id="screen-home" class="screen active">
+
+  <!-- hero -->
+  <header class="hero">
+    <div class="hero-badge">v3.0 NEURAL</div>
+    <div class="logo-wrap">
+      <svg class="logo-icon" viewBox="0 0 80 80" fill="none">
+        <polygon points="40,5 75,25 75,55 40,75 5,55 5,25" stroke="url(#g1)" stroke-width="2" fill="none"/>
+        <polygon points="40,18 62,30 62,50 40,62 18,50 18,30" stroke="url(#g2)" stroke-width="1.5" fill="rgba(0,255,200,.05)"/>
+        <circle cx="40" cy="40" r="10" fill="url(#g3)" opacity=".9"/>
+        <defs>
+          <linearGradient id="g1" x1="0" y1="0" x2="80" y2="80">
+            <stop offset="0%" stop-color="#00ffe7"/>
+            <stop offset="100%" stop-color="#bf00ff"/>
+          </linearGradient>
+          <linearGradient id="g2" x1="0" y1="0" x2="80" y2="80">
+            <stop offset="0%" stop-color="#00ffe7"/>
+            <stop offset="100%" stop-color="#bf00ff"/>
+          </linearGradient>
+          <radialGradient id="g3" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#00ffe7"/>
+            <stop offset="100%" stop-color="#bf00ff"/>
+          </radialGradient>
+        </defs>
+      </svg>
+      <h1 class="logo-text">ORDER<span>VAULT</span></h1>
+    </div>
+    <p class="hero-sub">La piattaforma definitiva per tracciare i tuoi ordini da <span class="hl">CNFans</span>, <span class="hl">OopBuy</span> e oltre.</p>
+
+    <div class="cta-row">
+      <button class="btn-primary pulse" id="btn-create">
+        <span class="btn-icon">⬡</span> Crea Stanza
+      </button>
+      <button class="btn-outline" id="btn-join-open">
+        <span class="btn-icon">◈</span> Unisciti
+      </button>
+    </div>
+  </header>
+
+  <!-- join form (inline) -->
+  <div class="join-box hidden" id="join-box">
+    <p class="join-label">Inserisci il codice a 6 cifre</p>
+    <div class="code-input-row">
+      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
+      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
+      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
+      <span class="code-sep">—</span>
+      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
+      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
+      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
+    </div>
+    <button class="btn-primary" id="btn-join-confirm">Connetti →</button>
+    <p class="join-error hidden" id="join-error">⚠ Stanza non trovata</p>
+  </div>
+
+  <!-- features scroll -->
+  <section class="features">
+    <div class="feat-card scroll-reveal">
+      <div class="feat-icon">🔗</div>
+      <h3>Link Diretto</h3>
+      <p>Incolla il link del prodotto da qualsiasi piattaforma di acquisto.</p>
+    </div>
+    <div class="feat-card scroll-reveal">
+      <div class="feat-icon">📦</div>
+      <h3>Peso & Prezzo</h3>
+      <p>Tieni traccia di peso stimato e costo per ogni articolo.</p>
+    </div>
+    <div class="feat-card scroll-reveal">
+      <div class="feat-icon">🖼️</div>
+      <h3>Galleria Foto</h3>
+      <p>Aggiungi immagini di riferimento direttamente agli ordini.</p>
+    </div>
+    <div class="feat-card scroll-reveal">
+      <div class="feat-icon">🔐</div>
+      <h3>Codice Stanza</h3>
+      <p>Condividi il codice a 6 cifre con chi vuoi per collaborare.</p>
+    </div>
+  </section>
+
+  <!-- how it works -->
+  <section class="howto">
+    <h2 class="section-title scroll-reveal">Come funziona</h2>
+    <div class="steps">
+      <div class="step scroll-reveal">
+        <div class="step-num">01</div>
+        <div class="step-text">
+          <h4>Crea la stanza</h4>
+          <p>Genera un codice univoco a 6 cifre.</p>
+        </div>
+      </div>
+      <div class="step-arrow scroll-reveal">→</div>
+      <div class="step scroll-reveal">
+        <div class="step-num">02</div>
+        <div class="step-text">
+          <h4>Aggiungi ordini</h4>
+          <p>Link, prezzo, peso e foto.</p>
+        </div>
+      </div>
+      <div class="step-arrow scroll-reveal">→</div>
+      <div class="step scroll-reveal">
+        <div class="step-num">03</div>
+        <div class="step-text">
+          <h4>Condividi</h4>
+          <p>Dai il codice agli amici per unirsi.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /screen-home -->
+
+
+<!-- ════════════════════════════════════════════
+     SCHERMATA STANZA
+     ════════════════════════════════════════════ -->
+<div id="screen-room" class="screen">
+
+  <!-- top bar -->
+  <nav class="room-nav">
+    <button class="nav-back" id="btn-back">← Home</button>
+    <div class="room-code-display">
+      <span class="rcd-label">STANZA</span>
+      <span class="rcd-code" id="room-code-display">000000</span>
+      <button class="copy-btn" id="btn-copy" title="Copia codice">⎘</button>
+    </div>
+    <button class="btn-primary sm" id="btn-add-order">+ Ordine</button>
+  </nav>
+
+  <!-- stats bar -->
+  <div class="stats-bar">
+    <div class="stat-item">
+      <span class="stat-val" id="stat-count">0</span>
+      <span class="stat-lbl">Ordini</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-val" id="stat-price">€0</span>
+      <span class="stat-lbl">Totale</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-val" id="stat-weight">0g</span>
+      <span class="stat-lbl">Peso stim.</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-val" id="stat-status">🟢</span>
+      <span class="stat-lbl">Stato</span>
+    </div>
+  </div>
+
+  <!-- orders grid -->
+  <div class="orders-grid" id="orders-grid">
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">⬡</div>
+      <p>Nessun ordine ancora.<br/>Clicca <strong>+ Ordine</strong> per iniziare.</p>
+    </div>
+  </div>
+
+</div><!-- /screen-room -->
+
+
+<!-- ════════════════════════════════════════════
+     MODAL — AGGIUNGI ORDINE
+     ════════════════════════════════════════════ -->
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal" id="modal-add">
+    <button class="modal-close" id="modal-close">✕</button>
+    <h2 class="modal-title">Nuovo Ordine</h2>
+
+    <div class="form-grid">
+      <div class="form-group full">
+        <label>Nome prodotto *</label>
+        <input type="text" id="f-name" placeholder="es. Nike Air Max 90" />
+      </div>
+      <div class="form-group full">
+        <label>Link prodotto</label>
+        <div class="input-icon-wrap">
+          <span class="input-icon">🔗</span>
+          <input type="url" id="f-link" placeholder="https://..." />
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Prezzo (€)</label>
+        <input type="number" id="f-price" placeholder="0.00" min="0" step="0.01" />
+      </div>
+      <div class="form-group">
+        <label>Peso stimato (g)</label>
+        <input type="number" id="f-weight" placeholder="0" min="0" />
+      </div>
+      <div class="form-group full">
+        <label>Piattaforma</label>
+        <div class="platform-select" id="platform-select">
+          <button class="plat-btn active" data-plat="CNFans">CNFans</button>
+          <button class="plat-btn" data-plat="OopBuy">OopBuy</button>
+          <button class="plat-btn" data-plat="Pandabuy">Pandabuy</button>
+          <button class="plat-btn" data-plat="Sugargoo">Sugargoo</button>
+          <button class="plat-btn" data-plat="Altro">Altro</button>
+        </div>
+      </div>
+      <div class="form-group full">
+        <label>Stato</label>
+        <div class="status-select" id="status-select">
+          <button class="status-btn active" data-status="In attesa">⏳ In attesa</button>
+          <button class="status-btn" data-status="Ordinato">📦 Ordinato</button>
+          <button class="status-btn" data-status="Spedito">🚀 Spedito</button>
+          <button class="status-btn" data-status="Arrivato">✅ Arrivato</button>
+        </div>
+      </div>
+      <div class="form-group full">
+        <label>Note</label>
+        <textarea id="f-notes" rows="2" placeholder="Taglia, colore, variante..."></textarea>
+      </div>
+      <div class="form-group full">
+        <label>Foto prodotto</label>
+        <div class="photo-drop" id="photo-drop">
+          <input type="file" id="f-photos" accept="image/*" multiple hidden />
+          <div class="drop-inner" id="drop-inner">
+            <span class="drop-icon">📸</span>
+            <p>Trascina le immagini qui oppure <u>clicca per scegliere</u></p>
+          </div>
+          <div class="photo-previews" id="photo-previews"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-outline" id="modal-cancel">Annulla</button>
+      <button class="btn-primary" id="modal-save">Salva Ordine ⬡</button>
+    </div>
+  </div>
+</div><!-- /modal -->
+
+
+<!-- ════════════════════════════════════════════
+     MODAL — DETTAGLIO ORDINE
+     ════════════════════════════════════════════ -->
+<div id="modal-detail-overlay" class="modal-overlay hidden">
+  <div class="modal modal-detail" id="modal-detail">
+    <button class="modal-close" id="detail-close">✕</button>
+    <div id="detail-content"></div>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════
+     TOAST NOTIFICHE
+     ════════════════════════════════════════════ -->
+<div id="toast-container"></div>
+
+
+<!-- ════════════════════════════════════════════
+     MODAL CODICE CREATO
+     ════════════════════════════════════════════ -->
+<div id="modal-code-overlay" class="modal-overlay hidden">
+  <div class="modal modal-code">
+    <h2 class="modal-title">🔐 Stanza Creata!</h2>
+    <p class="modal-sub">Condividi questo codice per far unire i tuoi amici</p>
+    <div class="big-code" id="big-code">000000</div>
+    <div class="code-bits" id="code-bits"></div>
+    <div class="modal-actions">
+      <button class="btn-outline" id="code-copy-btn">⎘ Copia</button>
+      <button class="btn-primary" id="code-enter-btn">Entra nella stanza →</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
