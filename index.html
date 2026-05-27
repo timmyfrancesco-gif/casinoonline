@@ -367,7 +367,7 @@
     <h2 class="modal-title" id="modal-title-text">// NUOVO ORDINE</h2>
 
     <div class="fg full">
-      <label>Link prodotto — incolla e cerco su tutti i siti automaticamente</label>
+      <label>Link prodotto * — incolla e cerco su tutti i siti automaticamente</label>
       <input type="url" id="f-link" placeholder="https://cnfans.com/product/?id=..." autocomplete="off"/>
       <!-- auto-search status bar -->
       <div class="fetch-bar hidden" id="fetch-bar">
@@ -379,6 +379,35 @@
       <div class="variants-bar hidden" id="variants-bar">
         <span class="vb-label">Varianti trovate:</span>
         <div class="vb-chips" id="vb-chips"></div>
+      </div>
+    </div>
+
+    <div class="fg full">
+      <label>Categoria *</label>
+      <div class="chip-row" id="cat-chips">
+        <button class="chip" data-v="Scarpe">👟 Scarpe</button>
+        <button class="chip" data-v="Maglia">👕 Maglia</button>
+        <button class="chip" data-v="Felpa">🧥 Felpa</button>
+        <button class="chip" data-v="Pantaloni">👖 Pantaloni</button>
+        <button class="chip" data-v="Altro">📦 Altro</button>
+      </div>
+    </div>
+
+    <!-- shown when category ≠ Altro -->
+    <div class="cat-fields hidden" id="cat-fields">
+      <div class="form-2col">
+        <div class="fg">
+          <label>Modello esatto *</label>
+          <input type="text" id="f-model" placeholder="es. Air Force 1 '07" autocomplete="off"/>
+        </div>
+        <div class="fg">
+          <label>Colore *</label>
+          <input type="text" id="f-color" placeholder="es. Bianco/Nero" autocomplete="off"/>
+        </div>
+      </div>
+      <div class="fg full">
+        <label id="f-size-label">Taglia *</label>
+        <input type="text" id="f-size" placeholder="es. 42" autocomplete="off"/>
       </div>
     </div>
 

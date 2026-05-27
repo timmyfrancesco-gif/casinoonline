@@ -727,17 +727,56 @@ body {
   font-size: .88rem; color: var(--muted); line-height: 1.7;
   margin-bottom: 16px;
 }
+.det-actions-row {
+  display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;
+}
 .qc-btn {
   display: inline-flex; align-items: center; gap: 8px;
   background: rgba(0,229,255,.07); border: 1px solid rgba(0,229,255,.25);
   border-radius: 8px; color: var(--cyan);
   font-family: var(--font-b); font-size: .85rem;
   padding: 9px 16px; cursor: none; transition: all .2s;
-  text-decoration: none; margin-bottom: 16px;
+  text-decoration: none;
 }
 .qc-btn:hover {
   background: rgba(0,229,255,.14); border-color: var(--cyan);
   box-shadow: 0 0 15px rgba(0,229,255,.2);
+}
+.oopbuy-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: rgba(168,85,247,.1); border: 1px solid rgba(168,85,247,.35);
+  border-radius: 8px; color: var(--purple);
+  font-family: var(--font-b); font-size: .85rem; font-weight: 600;
+  padding: 9px 16px; cursor: none; transition: all .2s;
+  text-decoration: none;
+}
+.oopbuy-btn:hover {
+  background: rgba(168,85,247,.22); border-color: var(--purple);
+  box-shadow: 0 0 18px rgba(168,85,247,.25);
+}
+
+/* ── CATEGORY FIELDS (in add modal) ── */
+.cat-fields { display: flex; flex-direction: column; gap: 14px; }
+.cat-fields.hidden { display: none; }
+
+/* ── CARD CATEGORY / META ── */
+.card-cat {
+  font-family: var(--font-m); font-size: .65rem;
+  color: var(--cyan); background: rgba(0,229,255,.07);
+  border: 1px solid rgba(0,229,255,.18);
+  border-radius: 99px; padding: 2px 8px; white-space: nowrap;
+}
+.card-catmeta {
+  font-family: var(--font-m); font-size: .65rem;
+  color: var(--purple);
+}
+.card-row3 {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.oopbuy-hint {
+  font-family: var(--font-m); font-size: .6rem;
+  color: var(--purple); opacity: .65;
+  margin-left: auto;
 }
 
 /* ── FETCH BAR ── */

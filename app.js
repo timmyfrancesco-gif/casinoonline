@@ -28,6 +28,7 @@ let editId = null;
 let pendingPhotos = [];
 let selectedPlat = 'CNFans';
 let selectedStatus = 'In attesa';
+let selectedCategory = '';
 let orderListener = null;
 let ordersCache = {};  // id -> order object
 let currentUser = null; // { username } when logged in
@@ -853,6 +854,72 @@ async function downloadSingleImage(imageUrl) {
   } catch { /* silent */ }
 }
 
+/* ── OOPBUY LINK CONVERTER ── */
+function toOopBuyLink(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host.includes('oopbuy.com')) return url;
+    if (host.includes('taobao.com')) {
+      const id = u.searchParams.get('id');
+      if (id) return `https://www.oopbuy.com/product/detail?id=${id}&platform=taobao`;
+    }
+    if (host.includes('1688.com')) {
+      const m = u.pathname.match(/\/offer\/(\d+)/);
+      if (m) return `https://www.oopbuy.com/product/detail?id=${m[1]}&platform=ali`;
+    }
+    if (host.includes('weidian.com')) {
+      const id = u.searchParams.get('itemID') || u.searchParams.get('id');
+      if (id) return `https://www.oopbuy.com/product/detail?id=${id}&platform=weidian`;
+    }
+    if (host.includes('jd.com')) {
+      const m = u.pathname.match(/\/(\d+)\.html/);
+      if (m) return `https://www.oopbuy.com/product/detail?id=${m[1]}&platform=jd`;
+    }
+    return `https://www.oopbuy.com/product/detail?url=${encodeURIComponent(url)}`;
+  } catch {
+    return `https://www.oopbuy.com/product/detail?url=${encodeURIComponent(url)}`;
+  }
+}
+
+/* ── CATEGORY FIELDS TOGGLE ── */
+function showCategoryFields(cat) {
+  const show = !!cat && cat !== 'Altro';
+  $('cat-fields').classList.toggle('hidden', !show);
+  if (!show) return;
+  const lbl = $('f-size-label');
+  const sizeEl = $('f-size');
+  const modelEl = $('f-model');
+  if (cat === 'Scarpe') {
+    lbl.textContent = 'Taglia (numero) *';
+    sizeEl.placeholder = 'es. 42';
+    modelEl.placeholder = 'es. Nike Air Force 1 Low';
+  } else if (cat === 'Pantaloni') {
+    lbl.textContent = 'Taglia *';
+    sizeEl.placeholder = 'es. 32/32 oppure L';
+    modelEl.placeholder = 'es. Carhartt Work Pant';
+  } else if (cat === 'Maglia') {
+    lbl.textContent = 'Taglia *';
+    sizeEl.placeholder = 'es. M / L / XL';
+    modelEl.placeholder = 'es. Jordan #23 Graphic Tee';
+  } else {
+    lbl.textContent = 'Taglia *';
+    sizeEl.placeholder = 'es. M / L / XL';
+    modelEl.placeholder = 'es. North Face Box Logo Hoodie';
+  }
+}
+
+/* ── CATEGORY CHIP CLICKS ── */
+$('cat-chips').addEventListener('click', e => {
+  const btn = e.target.closest('[data-v]');
+  if (!btn) return;
+  $('cat-chips').querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  selectedCategory = btn.dataset.v;
+  showCategoryFields(selectedCategory);
+});
+
 /* ── OPEN / CLOSE ADD MODAL ── */
 function openAddModal(id = null) {
   editId = id;
@@ -863,6 +930,10 @@ function openAddModal(id = null) {
   $('f-link').value = ''; $('f-name').value = '';
   $('f-price').value = ''; $('f-weight').value = '';
   $('f-notes').value = '';
+  $('f-model').value = ''; $('f-color').value = ''; $('f-size').value = '';
+  selectedCategory = '';
+  $('cat-chips').querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  $('cat-fields').classList.add('hidden');
   fbHide();
   lastSearchedUrl = '';
   clearTimeout(autoTimer);
@@ -881,8 +952,14 @@ function openAddModal(id = null) {
       $('f-notes').value  = o.notes   || '';
       selectedPlat   = o.platform || 'CNFans';
       selectedStatus = o.status   || 'In attesa';
+      selectedCategory = o.category || '';
       $('plat-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.v === selectedPlat));
       $('status-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.v === selectedStatus));
+      $('cat-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.v === selectedCategory));
+      showCategoryFields(selectedCategory);
+      $('f-model').value = o.model || '';
+      $('f-color').value = o.color || '';
+      $('f-size').value  = o.size  || '';
       // restore photos
       if (o.photoCount) {
         for (let i = 0; i < o.photoCount; i++) {
@@ -903,8 +980,17 @@ function closeAddModal() { closeOverlay('ov-add'); }
 /* ── SAVE ORDER ── */
 $('add-save').addEventListener('click', saveOrder);
 function saveOrder() {
+  const link = $('f-link').value.trim();
+  if (!link) { toast('Link prodotto obbligatorio', 'err'); shake($('f-link')); return; }
+
   const name = $('f-name').value.trim();
   if (!name) { toast('Nome prodotto richiesto', 'err'); shake($('f-name')); return; }
+
+  if (selectedCategory && selectedCategory !== 'Altro') {
+    if (!$('f-model').value.trim()) { toast('Inserisci il modello esatto', 'err'); shake($('f-model')); return; }
+    if (!$('f-color').value.trim()) { toast('Inserisci il colore', 'err'); shake($('f-color')); return; }
+    if (!$('f-size').value.trim())  { toast('Inserisci la taglia', 'err'); shake($('f-size')); return; }
+  }
 
   const id = editId || ('o' + Date.now() + Math.random().toString(36).slice(2, 5));
 
@@ -912,7 +998,11 @@ function saveOrder() {
   const order = {
     _id: id,
     name,
-    link:      $('f-link').value.trim(),
+    link,
+    category:  selectedCategory || '',
+    model:     $('f-model').value.trim(),
+    color:     $('f-color').value.trim(),
+    size:      $('f-size').value.trim(),
     price:     parseFloat($('f-price').value)  || 0,
     weight:    parseInt($('f-weight').value)   || 0,
     platform:  selectedPlat,
@@ -1013,6 +1103,12 @@ function buildCard(o, idx) {
     : `<div class="card-thumb-placeholder">📦</div>`;
 
   const badge = statusBadge(o.status);
+  const catIcons = { Scarpe:'👟', Maglia:'👕', Felpa:'🧥', Pantaloni:'👖', Altro:'📦' };
+  const catBadge = o.category ? `<span class="card-cat">${catIcons[o.category]||'📦'} ${esc(o.category)}</span>` : '';
+  const catMeta  = (o.size || o.color)
+    ? `<span class="card-catmeta">${[o.size && esc(o.size), o.color && esc(o.color)].filter(Boolean).join(' · ')}</span>`
+    : '';
+  const hasLink = !!o.link;
 
   card.innerHTML = `
     ${thumb}
@@ -1022,11 +1118,14 @@ function buildCard(o, idx) {
         <span class="card-plat">${esc(o.platform)}</span>
       </div>
       <div class="card-row2">
+        ${catBadge}${catMeta}
         ${o.price  ? `<span class="cprice">€${o.price.toFixed(2)}</span>` : ''}
         ${o.weight ? `<span>⚖ ${o.weight}g</span>` : ''}
-        ${photos.length > 1 ? `<span>🖼 ${photos.length}</span>` : ''}
       </div>
-      <span class="badge ${badge.cls}">${badge.lbl}</span>
+      <div class="card-row3">
+        <span class="badge ${badge.cls}">${badge.lbl}</span>
+        ${hasLink ? `<span class="oopbuy-hint">↗ OopBuy</span>` : ''}
+      </div>
       <div class="card-actions">
         <button class="ca-btn" data-action="view">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" stroke="currentColor" stroke-width="1.8"/></svg>
@@ -1044,11 +1143,16 @@ function buildCard(o, idx) {
 
   card.addEventListener('click', e => {
     const btn = e.target.closest('[data-action]');
-    if (!btn) { openDetail(o._id); return; }
-    e.stopPropagation();
-    if (btn.dataset.action === 'view')  openDetail(o._id);
-    if (btn.dataset.action === 'edit')  openAddModal(o._id);
-    if (btn.dataset.action === 'del')   deleteOrder(o._id);
+    if (btn) {
+      e.stopPropagation();
+      if (btn.dataset.action === 'view') openDetail(o._id);
+      if (btn.dataset.action === 'edit') openAddModal(o._id);
+      if (btn.dataset.action === 'del')  deleteOrder(o._id);
+      return;
+    }
+    const oopUrl = toOopBuyLink(o.link);
+    if (oopUrl) window.open(oopUrl, '_blank', 'noopener');
+    else openDetail(o._id);
   });
 
   return card;
@@ -1076,9 +1180,9 @@ function openDetail(id) {
        </a>`
     : '<span style="opacity:.4">—</span>';
 
-  const qcURL = o.link
-    ? `https://www.uufinds.com/?q=${encodeURIComponent(o.link)}`
-    : 'https://www.uufinds.com';
+  const oopUrl  = toOopBuyLink(o.link);
+  const qcURL   = o.link ? `https://www.uufinds.com/?q=${encodeURIComponent(o.link)}` : null;
+  const catIcons2 = { Scarpe:'👟', Maglia:'👕', Felpa:'🧥', Pantaloni:'👖', Altro:'📦' };
 
   const badge = statusBadge(o.status);
   const created = o.ts ? new Date(o.ts).toLocaleDateString('it-IT') : '—';
@@ -1086,19 +1190,28 @@ function openDetail(id) {
   $('detail-body').innerHTML = `
     ${galleryHTML}
     <div class="det-title">${esc(o.name)}</div>
-    ${o.link ? `
-    <a href="${qcURL}" target="_blank" rel="noopener" class="qc-btn">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.8"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-      Cerca QC su UUFinds
-    </a>` : ''}
+    <div class="det-actions-row">
+      ${oopUrl ? `<a href="${esc(oopUrl)}" target="_blank" rel="noopener" class="oopbuy-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><polyline points="15,3 21,3 21,9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><line x1="10" y1="14" x2="21" y2="3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        Apri su OopBuy
+      </a>` : ''}
+      ${qcURL ? `<a href="${esc(qcURL)}" target="_blank" rel="noopener" class="qc-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.8"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        QC su UUFinds
+      </a>` : ''}
+    </div>
     <div class="det-grid">
+      ${o.category ? `<div class="det-item"><label>Categoria</label><span>${catIcons2[o.category]||'📦'} ${esc(o.category)}</span></div>` : ''}
+      ${o.model ? `<div class="det-item"><label>Modello</label><span>${esc(o.model)}</span></div>` : ''}
+      ${o.color ? `<div class="det-item"><label>Colore</label><span>${esc(o.color)}</span></div>` : ''}
+      ${o.size  ? `<div class="det-item"><label>Taglia</label><span style="color:var(--cyan);font-weight:700">${esc(o.size)}</span></div>` : ''}
       <div class="det-item"><label>Piattaforma</label><span>${esc(o.platform)}</span></div>
       <div class="det-item"><label>Stato</label><span class="badge ${badge.cls}">${badge.lbl}</span></div>
       <div class="det-item"><label>Prezzo</label><span style="color:var(--yellow);font-weight:700">${o.price ? '€' + o.price.toFixed(2) : '—'}</span></div>
       <div class="det-item"><label>Peso stimato</label><span>${o.weight ? o.weight + ' g' : '—'}</span></div>
       <div class="det-item"><label>Aggiunto</label><span>${created}</span></div>
       <div class="det-item"><label>Foto</label><span>${photos.length || '—'}</span></div>
-      <div class="det-item" style="grid-column:1/-1"><label>Link</label>${linkHTML}</div>
+      <div class="det-item" style="grid-column:1/-1"><label>Link originale</label>${linkHTML}</div>
     </div>
     ${o.notes ? `<div class="det-notes">${esc(o.notes)}</div>` : ''}
     <div class="modal-footer" style="margin-top:8px">
