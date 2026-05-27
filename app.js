@@ -514,29 +514,95 @@ function onLinkChange() {
 async function runAutoFill(url) {
   lastSearchedUrl = url;
 
-  /* ── STEP 1: UUFinds ── */
+  /* ── STEP 1: Vercel API (server-side, no CORS, su deploy) ── */
+  const apiResult = await tryServerAPI(url);
+  if (apiResult) return;                     // applyProductData + fbShow already called
+
+  /* ── STEP 2: Fallback browser CORS proxy (locale/dev) ── */
   fbShow('searching', '🔍 Ricerca su UUFinds...');
   const uuf = await searchUUFinds(url);
   if (uuf && (uuf.title || uuf.photos.length)) {
     applyProductData(uuf);
     const n = uuf.photos.length;
-    fbShow('ok', n
-      ? `✓ Trovato su UUFinds — ${n} foto QC caricate`
-      : '✓ Nome trovato su UUFinds');
+    fbShow('ok', n ? `✓ Trovato su UUFinds — ${n} foto QC` : '✓ Nome trovato su UUFinds');
     return;
   }
 
-  /* ── STEP 2: pagina prodotto diretta ── */
   fbShow('searching', '🔍 Lettura pagina prodotto...');
   const pg = await scrapeProductPage(url);
   if (pg && (pg.title || pg.image)) {
     applyProductData({ title: pg.title, photos: pg.image ? [pg.image] : [], weight: 0, remote: true });
-    fbShow('warn', '⚠ Info parziali trovate — controlla e completa');
+    fbShow('warn', '⚠ Info parziali — controlla e completa');
     return;
   }
 
-  /* ── STEP 3: niente trovato ── */
   fbShow('manual', '✏ Prodotto non trovato — compila manualmente');
+}
+
+/* ── Vercel server-side API call ── */
+async function tryServerAPI(url) {
+  // Only on real deployment (not file:// or localhost without vercel dev)
+  const isDeployed = location.protocol === 'https:' ||
+    (location.hostname !== '' && location.hostname !== '127.0.0.1' && !location.hostname.includes('localhost'));
+
+  if (!isDeployed) return false;
+
+  try {
+    fbShow('searching', '🔍 Ricerca su UUFinds...');
+    const res = await fetch(`/api/lookup?url=${encodeURIComponent(url)}`, {
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) return false;
+
+    const data = await res.json();
+    if (!data || data.error) return false;
+
+    if (!data.source) {
+      fbShow('manual', '✏ Prodotto non trovato — compila manualmente');
+      return true; // API worked, just no result
+    }
+
+    /* Download images via /api/image proxy */
+    let photos = [];
+    if (data.images && data.images.length > 0) {
+      fbShow('searching', `⬇ Download ${data.images.length} foto...`);
+      photos = await downloadViaAPI(data.images.slice(0, 5));
+    }
+
+    applyProductData({
+      title:  data.title  || '',
+      weight: data.weight || 0,
+      price:  data.price  || 0,
+      photos
+    });
+
+    const src = data.source === 'uufinds' ? 'UUFinds' : 'pagina prodotto';
+    fbShow(photos.length ? 'ok' : 'warn',
+      photos.length
+        ? `✓ Trovato su ${src} — ${photos.length} foto caricate`
+        : `✓ Nome trovato su ${src} — aggiungi foto manualmente`
+    );
+    return true;
+  } catch { return false; }
+}
+
+/* Download images through /api/image proxy (server-side, no CORS) */
+async function downloadViaAPI(imageUrls) {
+  const results = [];
+  await Promise.allSettled(imageUrls.map(async (url) => {
+    try {
+      const res = await fetch(`/api/image?url=${encodeURIComponent(url)}`, {
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      if (!blob.type.startsWith('image/') || blob.size < 800) return;
+      const file = new File([blob], 'photo.jpg', { type: blob.type });
+      const b64 = await new Promise(r => compressImage(file, 420, 420, .78, r));
+      results.push({ name: 'photo.jpg', data: b64 });
+    } catch { /* skip */ }
+  }));
+  return results;
 }
 
 /* ── Fetch bar helpers ── */
