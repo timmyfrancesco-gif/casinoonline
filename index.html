@@ -218,13 +218,18 @@
     <h2 class="modal-title" id="modal-title-text">// NUOVO ORDINE</h2>
 
     <div class="fg full">
-      <label>Link prodotto — incolla e cerco tutto su UUFinds</label>
+      <label>Link prodotto — incolla e cerco su tutti i siti automaticamente</label>
       <input type="url" id="f-link" placeholder="https://cnfans.com/product/?id=..." autocomplete="off"/>
       <!-- auto-search status bar -->
       <div class="fetch-bar hidden" id="fetch-bar">
         <span class="fb-icon" id="fb-icon"></span>
         <span class="fb-text" id="fb-text"></span>
         <div class="fb-scan" id="fb-scan"></div>
+      </div>
+      <!-- variants bar: shown when variants are found -->
+      <div class="variants-bar hidden" id="variants-bar">
+        <span class="vb-label">Varianti trovate:</span>
+        <div class="vb-chips" id="vb-chips"></div>
       </div>
     </div>
 

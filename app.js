@@ -558,30 +558,35 @@ async function tryServerAPI(url) {
     const data = await res.json();
     if (!data || data.error === 'invalid_url') return false;
 
-    if (!data.source) {
+    if (!data.source && (!data.sources || !data.sources.length)) {
       fbShow('manual', '✏ Prodotto non trovato — compila manualmente');
       return true;
     }
 
-    /* Download images via /api/image proxy */
+    /* Download images via /api/image proxy (merge from all sources) */
     let photos = [];
     if (data.images?.length > 0) {
-      fbShow('searching', `⬇ Download ${data.images.length} foto...`);
-      photos = await downloadViaAPI(data.images.slice(0, 5));
+      fbShow('searching', `⬇ Download ${data.images.length} foto da ${(data.sources || [data.source]).join(' + ')}...`);
+      photos = await downloadViaAPI(data.images.slice(0, 6));
     }
 
     applyProductData({
-      title:  data.title  || '',
-      weight: data.weight || 0,
-      price:  data.price  || 0,
+      title:    data.title    || '',
+      weight:   data.weight   || 0,
+      price:    data.price    || 0,
+      variants: data.variants || [],
       photos
     });
 
-    const src = data.source === 'uufinds' ? 'UUFinds 🎉' : 'pagina prodotto';
+    /* Build source label */
+    const srcList = (data.sources || [data.source]).filter(Boolean);
+    const srcLabel = srcList.includes('uufinds') ? 'UUFinds 🎉' : srcList.includes('nicefinds') ? 'NiceFinds' : 'pagina prodotto';
+    const multiSrc = srcList.length > 1 ? ` + ${srcList.length - 1} altra fonte` : '';
+
     fbShow(
       photos.length ? 'ok' : 'warn',
       photos.length
-        ? `✓ Trovato su ${src} — ${photos.length} foto caricate`
+        ? `✓ ${srcLabel}${multiSrc} — ${photos.length} foto caricate`
         : data.title
           ? `✓ Nome trovato — nessuna foto QC disponibile`
           : '⚠ Niente trovato — compila manualmente'
@@ -624,6 +629,8 @@ function fbShow(state, text) {
 }
 function fbHide() {
   $('fetch-bar').className = 'fetch-bar hidden';
+  $('variants-bar').classList.add('hidden');
+  $('vb-chips').innerHTML = '';
   lastSearchedUrl = '';
 }
 
@@ -762,13 +769,11 @@ async function downloadImages(urls) {
 }
 
 /* ── Apply fetched data to form ── */
-function applyProductData({ title, photos, weight, remote }) {
+function applyProductData({ title, photos, weight, remote, variants }) {
   if (title && !$('f-name').value)   $('f-name').value  = title;
   if (weight && !$('f-weight').value) $('f-weight').value = weight;
   if (photos && photos.length > 0 && pendingPhotos.length === 0) {
-    /* Remote = array of raw image URLs (not yet downloaded) */
     if (remote) {
-      /* photos here is actually an array of URLs to download */
       downloadImages(photos).then(downloaded => {
         pendingPhotos.push(...downloaded);
         renderDZPreviews();
@@ -778,6 +783,51 @@ function applyProductData({ title, photos, weight, remote }) {
       renderDZPreviews();
     }
   }
+  if (variants && variants.length > 0) renderVariants(variants);
+}
+
+/* ── Render found variants as clickable chips ── */
+function renderVariants(variants) {
+  const bar = $('variants-bar');
+  const chips = $('vb-chips');
+  chips.innerHTML = '';
+
+  /* Group by type */
+  const grouped = {};
+  variants.forEach(v => {
+    const type = v.type || 'variante';
+    if (!grouped[type]) grouped[type] = [];
+    grouped[type].push(v);
+  });
+
+  Object.entries(grouped).forEach(([type, items]) => {
+    if (Object.keys(grouped).length > 1) {
+      const lbl = document.createElement('span');
+      lbl.className = 'vb-type-label';
+      lbl.textContent = type;
+      chips.appendChild(lbl);
+    }
+    items.slice(0, 12).forEach(v => {
+      const chip = document.createElement('button');
+      chip.className = 'vb-chip';
+      chip.type = 'button';
+      chip.textContent = v.value;
+      chip.title = `Clicca per aggiungere alle note`;
+      chip.addEventListener('click', () => {
+        chip.classList.toggle('selected');
+        const notes = $('f-notes');
+        const tag = `${type !== 'variante' ? type + ': ' : ''}${v.value}`;
+        if (chip.classList.contains('selected')) {
+          notes.value = notes.value ? notes.value + ', ' + tag : tag;
+        } else {
+          notes.value = notes.value.replace(new RegExp(',?\\s*' + tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '').replace(/^,\s*/, '').trim();
+        }
+      });
+      chips.appendChild(chip);
+    });
+  });
+
+  bar.classList.remove('hidden');
 }
 
 async function downloadSingleImage(imageUrl) {

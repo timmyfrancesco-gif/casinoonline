@@ -1,11 +1,10 @@
 /**
- * OrderVault — /api/lookup  (v3)
+ * OrderVault — /api/lookup  (v5)
  * GET /api/lookup?url=PRODUCT_URL
  *
- * Flow:
- *  1. Fetch product page → og:tags + SSR JSON + platform-specific API
- *  2. Search UUFinds via: RSS feed → WP REST API → Next.js data → scrape
- *  3. Merge: UUFinds photos + product page title/weight/price
+ * Strategy: search ALL sources in parallel, merge everything.
+ * Images pooled from UUFinds + NiceFinds + product page (deduped, up to 12).
+ * Best title/weight/price wins. Variants (sizes, colors) extracted when available.
  */
 export const config = { runtime: 'edge' };
 
@@ -22,64 +21,76 @@ export default async function handler(req) {
   const raw = searchParams.get('url') || '';
   if (!raw.startsWith('http')) return resp({ error: 'invalid_url', source: null }, 400);
 
-  /* Run both in parallel */
-  const [pageRes, uufRes] = await Promise.allSettled([
+  /* All sources in parallel */
+  const [pageRes, uufRes, nfRes] = await Promise.allSettled([
     getProductPage(raw),
-    getUUFinds(raw)
+    getUUFinds(raw),
+    getNiceFinds(raw)
   ]);
 
   const page = pageRes.status === 'fulfilled' ? pageRes.value : null;
   const uuf  = uufRes.status  === 'fulfilled' ? uufRes.value  : null;
+  const nf   = nfRes.status   === 'fulfilled' ? nfRes.value   : null;
 
-  /* UUFinds wins for QC photos; product page wins for title/weight/price */
-  if (uuf && (uuf.images.length > 0 || uuf.title)) {
-    return resp({
-      source:  'uufinds',
-      title:   uuf.title  || page?.title  || '',
-      images:  uuf.images.length ? uuf.images : (page?.images || []),
-      weight:  page?.weight || uuf.weight || 0,
-      price:   page?.price  || uuf.price  || 0,
-    });
+  /* Merge images from ALL sources (deduped) */
+  const allImages = [...new Set([
+    ...(uuf?.images  || []),
+    ...(nf?.images   || []),
+    ...(page?.images || []),
+  ])].slice(0, 12);
+
+  /* Best title: prefer QC sites (they include product name in post title) */
+  const title = uuf?.title || nf?.title || page?.title || '';
+  const weight = page?.weight || uuf?.weight || nf?.weight || 0;
+  const price  = page?.price  || uuf?.price  || nf?.price  || 0;
+  const variants = page?.variants || [];
+
+  /* Record which sources contributed */
+  const sources = [
+    uuf  && (uuf.images.length  || uuf.title)  ? 'uufinds'   : null,
+    nf   && (nf.images.length   || nf.title)   ? 'nicefinds' : null,
+    page && (page.images.length || page.title) ? 'page'      : null,
+  ].filter(Boolean);
+
+  if (!title && !allImages.length) {
+    return resp({ source: null, sources: [], title: '', images: [], weight: 0, price: 0, variants: [] });
   }
-  if (page && (page.title || page.images.length)) {
-    return resp({ source: 'page', ...page });
-  }
-  return resp({ source: null, title: '', images: [], weight: 0, price: 0 });
+
+  return resp({ source: sources[0] || null, sources, title, images: allImages, weight, price, variants });
 }
 
 /* ══════════════════════════════════════════════
-   PRODUCT PAGE (CNFans / OopBuy / Pandabuy …)
+   PRODUCT PAGE (CNFans / OopBuy / Pandabuy / Sugargoo …)
    ══════════════════════════════════════════════ */
 async function getProductPage(url) {
-  /* 1. Try platform-specific API first (JSON, most reliable) */
   const apiData = await tryPlatformAPI(url);
   if (apiData?.title || apiData?.images?.length) return apiData;
 
-  /* 2. Fetch raw HTML */
   const html = await get(url);
   if (!html) return null;
 
-  /* 3. Parse */
   const doc = parse(html);
-  const title   = pickTitle(doc, html);
-  const images  = pickImages(doc, html);
-  const weight  = pickWeight(doc.body?.textContent || '');
-  const price   = pickPrice(doc.body?.textContent || '');
-  return { title, images, weight, price };
+  const ssr  = extractSSR(html);
+
+  const title    = pickTitle(doc, html);
+  const images   = pickImages(doc, html);
+  const weight   = pickWeight(doc.body?.textContent || '');
+  const price    = pickPrice(doc.body?.textContent || '');
+  const variants = pickVariants(ssr, doc);
+  return { title, images, weight, price, variants };
 }
 
 /* Platform-specific API attempts */
 async function tryPlatformAPI(url) {
-  /* CNFans: extract id param → call their goods API */
+  /* ── CNFans ── */
   if (url.includes('cnfans.com')) {
     const id = new URL(url).searchParams.get('id');
     if (id) {
-      const candidates = [
+      for (const api of [
         `https://cnfans.com/api/ware/waresinfo?ware_id=${id}`,
         `https://cnfans.com/api/goods/detail?id=${id}`,
         `https://cnfans.com/index.php?route=product/product/getInfo&goods_id=${id}`,
-      ];
-      for (const api of candidates) {
+      ]) {
         const data = await getJSON(api);
         if (data) {
           const p = data.data || data.result || data;
@@ -90,23 +101,131 @@ async function tryPlatformAPI(url) {
               .forEach(i => { if (typeof i === 'string') imgs.push(i); else if (i?.img_url) imgs.push(i.img_url); });
           }
           if (p.image) imgs.push(p.image);
-          if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || p.sell_price || 0 };
+          const variants = extractVariantsFromAPI(p);
+          if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || p.sell_price || 0, variants };
         }
       }
     }
   }
 
-  /* OopBuy: /product/detail/ID */
+  /* ── OopBuy ── */
   if (url.includes('oopbuy.com')) {
     const m = url.match(/\/detail\/([^/?#]+)/);
     if (m) {
-      const id = m[1];
-      const data = await getJSON(`https://www.oopbuy.com/api/product/detail?id=${id}`);
+      const data = await getJSON(`https://www.oopbuy.com/api/product/detail?id=${m[1]}`);
       if (data) {
         const p = data.data || data;
         const title = p.name || p.product_name || '';
         const imgs = (p.images || p.gallery || []).map(i => typeof i === 'string' ? i : i.url || '').filter(Boolean);
-        if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || 0 };
+        const variants = extractVariantsFromAPI(p);
+        if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || 0, variants };
+      }
+    }
+  }
+
+  /* ── Pandabuy ── */
+  if (url.includes('pandabuy.com')) {
+    const u = new URL(url);
+    const id = u.searchParams.get('id') || u.searchParams.get('itemId');
+
+    if (id) {
+      /* Next.js _next/data */
+      try {
+        const home = await get('https://www.pandabuy.com/', 5000);
+        const bid = home?.match(/"buildId"\s*:\s*"([^"]+)"/)?.[1];
+        if (bid) {
+          const data = await getJSON(`https://www.pandabuy.com/_next/data/${bid}/product.json?id=${id}`, 7000);
+          if (data) {
+            const props = data.pageProps || data;
+            const title = deepFind(props, ['name','title','productName','goodsName','headline']) || '';
+            const imgs  = deepImages(props);
+            const variants = extractVariantsFromAPI(props);
+            const priceStr = deepFind(props, ['price','salePrice','sellPrice','cnyPrice']) || '0';
+            if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: 0, price: parseFloat(priceStr) || 0, variants };
+          }
+        }
+      } catch {}
+
+      /* Direct API candidates */
+      for (const api of [
+        `https://www.pandabuy.com/api/pandabuy-goods/detail?id=${id}`,
+        `https://www.pandabuy.com/api/goods/detail?id=${id}`,
+        `https://www.pandabuy.com/api/detail?id=${id}`,
+      ]) {
+        const data = await getJSON(api, 6000);
+        if (data) {
+          const p = data.data || data.result || data;
+          const title = p.name || p.title || p.productName || p.goodsName || '';
+          const imgData = p.images || p.imageList || p.picList || p.pics || [];
+          const imgs = (Array.isArray(imgData) ? imgData : [imgData])
+            .map(i => typeof i === 'string' ? i : i?.url || i?.src || i?.img || '')
+            .filter(Boolean);
+          if (p.mainImg) imgs.unshift(p.mainImg);
+          const variants = extractVariantsFromAPI(p);
+          if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || p.salePrice || 0, variants };
+        }
+      }
+    }
+
+    /* SSR fallback */
+    const html = await get(url, 8000);
+    if (html) {
+      const ssr = extractSSR(html);
+      if (ssr) {
+        const title = deepFind(ssr, ['name','title','productName','goodsName']) || '';
+        const imgs  = deepImages(ssr);
+        if (title || imgs.length) {
+          const doc = parse(html);
+          return { title: title || pickTitle(doc, html), images: imgs.slice(0, 6), weight: pickWeight(doc.body?.textContent || ''), price: pickPrice(doc.body?.textContent || ''), variants: pickVariants(ssr, doc) };
+        }
+      }
+    }
+  }
+
+  /* ── Sugargoo ── */
+  if (url.includes('sugargoo.com')) {
+    const hash = url.split('#')[1] || '';
+    const plMatch = hash.match(/[?&]productLink=([^&]+)/);
+    const productLink = plMatch ? decodeURIComponent(plMatch[1]) : '';
+    const apiTarget = productLink || url;
+
+    for (const api of [
+      `https://www.sugargoo.com/index/item/index.html?language=en&productLink=${encodeURIComponent(apiTarget)}`,
+      `https://www.sugargoo.com/index/product/detail?url=${encodeURIComponent(apiTarget)}`,
+    ]) {
+      const html = await get(api, 8000);
+      if (html && html.length > 2000) {
+        const doc = parse(html);
+        const ssr = extractSSR(html);
+        const title  = (ssr ? deepFind(ssr, ['name','title','productName','goodsName']) : '') || pickTitle(doc, html);
+        const imgs   = [...new Set([...(ssr ? deepImages(ssr) : []), ...pickImages(doc, html)])].slice(0, 6);
+        const variants = pickVariants(ssr, doc);
+        if (title || imgs.length) return { title, images: imgs, weight: pickWeight(doc.body?.textContent || ''), price: pickPrice(doc.body?.textContent || ''), variants };
+      }
+    }
+
+    const jsonData = await getJSON(`https://www.sugargoo.com/api/item/getDetail?productLink=${encodeURIComponent(apiTarget)}`, 7000);
+    if (jsonData) {
+      const p = jsonData.data || jsonData;
+      const title = p.title || p.name || p.productName || '';
+      const imgData = p.images || p.imageList || p.gallery || [];
+      const imgs = (Array.isArray(imgData) ? imgData : [imgData]).map(i => typeof i === 'string' ? i : i?.url || '').filter(Boolean);
+      const variants = extractVariantsFromAPI(p);
+      if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || 0, variants };
+    }
+  }
+
+  /* ── Hagobuy ── */
+  if (url.includes('hagobuy.com')) {
+    const id = new URL(url).searchParams.get('id') || new URL(url).searchParams.get('productId');
+    if (id) {
+      const data = await getJSON(`https://www.hagobuy.com/api/product/detail?id=${id}`, 6000);
+      if (data) {
+        const p = data.data || data;
+        const title = p.name || p.title || '';
+        const imgs = (p.images || p.gallery || []).map(i => typeof i === 'string' ? i : i?.url || '').filter(Boolean);
+        const variants = extractVariantsFromAPI(p);
+        if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || 0, variants };
       }
     }
   }
@@ -115,12 +234,76 @@ async function tryPlatformAPI(url) {
 }
 
 /* ══════════════════════════════════════════════
+   VARIANT EXTRACTION
+   Looks for size/color/option data in API responses and SSR JSON
+   ══════════════════════════════════════════════ */
+function extractVariantsFromAPI(obj) {
+  if (!obj || typeof obj !== 'object') return [];
+  const variants = [];
+
+  /* Common variant keys in Chinese platform APIs */
+  const skuKeys = ['skuList','skus','sku_list','variants','options','specifications','propList','props','sizeList','colorList','attrList','attrs'];
+  for (const k of skuKeys) {
+    const raw = obj[k] || (obj.data && obj.data[k]) || (obj.result && obj.result[k]);
+    if (Array.isArray(raw) && raw.length > 0) {
+      raw.forEach(item => {
+        if (typeof item === 'string') {
+          variants.push({ type: k.replace(/List|list/, ''), value: item });
+        } else if (item && typeof item === 'object') {
+          const val = item.value || item.name || item.skuName || item.propValue || item.attr_value || '';
+          const type = item.type || item.propName || item.attr_name || k.replace(/List|list/, '');
+          if (val) variants.push({ type: String(type), value: String(val), image: item.image || item.img || '' });
+        }
+      });
+      if (variants.length) return variants.slice(0, 30);
+    }
+  }
+
+  /* Recurse one level deeper */
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const sub = extractVariantsFromAPI(v);
+      if (sub.length) return sub;
+    }
+  }
+
+  return [];
+}
+
+function pickVariants(ssr, doc) {
+  if (!ssr && !doc) return [];
+
+  /* Try from SSR data */
+  if (ssr) {
+    const v = extractVariantsFromAPI(ssr);
+    if (v.length) return v;
+  }
+
+  /* Try from page JSON blobs */
+  const scripts = doc?.querySelectorAll('script:not([src])') || [];
+  for (const s of scripts) {
+    const text = s.textContent || '';
+    if (!text.includes('sku') && !text.includes('variant') && !text.includes('option')) continue;
+    const skuMatch = text.match(/["'](?:skuList|skus|variants|sizeList|colorList|propList)["']\s*:\s*(\[[\s\S]{1,4000}?\])/);
+    if (skuMatch) {
+      try {
+        const parsed = JSON.parse(skuMatch[1]);
+        if (Array.isArray(parsed) && parsed.length) {
+          return extractVariantsFromAPI({ skuList: parsed });
+        }
+      } catch {}
+    }
+  }
+
+  return [];
+}
+
+/* ══════════════════════════════════════════════
    UUFINDS — 4 METHODS
    ══════════════════════════════════════════════ */
 async function getUUFinds(productUrl) {
   const q = encodeURIComponent(productUrl);
 
-  /* ── METHOD 1: RSS feed (always SSR on WordPress) ── */
   try {
     const xml = await get(`https://www.uufinds.com/feed/?s=${q}&post_type=post`, 8000);
     if (xml && xml.includes('<item>')) {
@@ -129,7 +312,6 @@ async function getUUFinds(productUrl) {
     }
   } catch {}
 
-  /* ── METHOD 2: WordPress REST API ── */
   try {
     const posts = await getJSON(
       `https://www.uufinds.com/wp-json/wp/v2/posts?search=${q}&per_page=3&_embed=true&_fields=id,title,content,_embedded`,
@@ -141,17 +323,13 @@ async function getUUFinds(productUrl) {
     }
   } catch {}
 
-  /* ── METHOD 3: Next.js _next/data ── */
   try {
     const home = await get('https://www.uufinds.com/', 6000);
     if (home) {
       const bid = home.match(/"buildId"\s*:\s*"([^"]+)"/)?.[1];
       if (bid) {
         for (const path of ['s', 'search']) {
-          const data = await getJSON(
-            `https://www.uufinds.com/_next/data/${bid}/${path}.json?q=${q}`,
-            6000
-          );
+          const data = await getJSON(`https://www.uufinds.com/_next/data/${bid}/${path}.json?q=${q}`, 6000);
           if (data) {
             const r = parseNextData(data);
             if (r?.title || r?.images?.length) return r;
@@ -161,7 +339,6 @@ async function getUUFinds(productUrl) {
     }
   } catch {}
 
-  /* ── METHOD 4: Direct HTML scrape (works if SSR) ── */
   for (const su of [
     `https://www.uufinds.com/?s=${q}`,
     `https://www.uufinds.com/s/?q=${q}`,
@@ -172,7 +349,54 @@ async function getUUFinds(productUrl) {
       const doc = parse(html);
       const title  = pickTitle(doc, html);
       const images = pickImages(doc, html);
-      if (title || images.length) return { title, images, weight: 0, price: 0 };
+      if (title || images.length) return { title, images, weight: 0, price: 0, variants: [] };
+    } catch {}
+  }
+
+  return null;
+}
+
+/* ══════════════════════════════════════════════
+   NICEFINDS — RSS → WP REST → scrape
+   ══════════════════════════════════════════════ */
+async function getNiceFinds(productUrl) {
+  const q = encodeURIComponent(productUrl);
+  const domains = [
+    'https://www.nicefinds.net',
+    'https://nicefinds.net',
+    'https://www.nicefinds.io',
+    'https://nicefinds.io',
+    'https://www.thenicefinds.com',
+  ];
+
+  for (const domain of domains) {
+    try {
+      const xml = await get(`${domain}/feed/?s=${q}&post_type=post`, 6000);
+      if (xml && xml.includes('<item>')) {
+        const result = parseRSS(xml);
+        if (result?.title || result?.images?.length) return result;
+      }
+    } catch {}
+
+    try {
+      const posts = await getJSON(
+        `${domain}/wp-json/wp/v2/posts?search=${q}&per_page=3&_embed=true&_fields=id,title,content,_embedded`,
+        6000
+      );
+      if (Array.isArray(posts) && posts.length > 0) {
+        const result = parseWPPosts(posts);
+        if (result?.title || result?.images?.length) return result;
+      }
+    } catch {}
+
+    try {
+      const html = await get(`${domain}/?s=${q}`, 6000);
+      if (html && html.length > 1000) {
+        const doc = parse(html);
+        const title  = pickTitle(doc, html);
+        const images = pickImages(doc, html);
+        if (title || images.length) return { title, images, weight: 0, price: 0, variants: [] };
+      }
     } catch {}
   }
 
@@ -200,7 +424,7 @@ function parseRSS(xml) {
   let m;
   while ((m = re.exec(content)) !== null && images.length < 6) images.push(m[1]);
 
-  return { title, images, weight: 0, price: 0 };
+  return { title, images, weight: 0, price: 0, variants: [] };
 }
 
 /* ══════════════════════════════════════════════
@@ -211,20 +435,17 @@ function parseWPPosts(posts) {
   const title = stripTags(p.title?.rendered || '');
   const images = [];
 
-  /* Featured image */
   const feat = p._embedded?.['wp:featuredmedia']?.[0];
   if (feat?.source_url) images.push(feat.source_url);
-  /* Media gallery */
   (p._embedded?.['wp:attachment'] || []).flat()
     .forEach(a => { if (a?.source_url) images.push(a.source_url); });
-  /* Images in post content */
   if (p.content?.rendered) {
     const re = /src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp)[^"']*)/gi;
     let m;
     while ((m = re.exec(p.content.rendered)) !== null && images.length < 6) images.push(m[1]);
   }
 
-  return { title, images: [...new Set(images)].slice(0, 6), weight: 0, price: 0 };
+  return { title, images: [...new Set(images)].slice(0, 6), weight: 0, price: 0, variants: [] };
 }
 
 /* ══════════════════════════════════════════════
@@ -233,9 +454,10 @@ function parseWPPosts(posts) {
 function parseNextData(data) {
   const props = data?.pageProps || data?.props?.pageProps || data;
   return {
-    title:  deepFind(props, ['name','title','productName','goodsName','headline']) || '',
-    images: deepImages(props),
-    weight: 0, price: 0
+    title:    deepFind(props, ['name','title','productName','goodsName','headline']) || '',
+    images:   deepImages(props),
+    weight:   0, price: 0,
+    variants: extractVariantsFromAPI(props),
   };
 }
 
@@ -247,18 +469,13 @@ function parse(html) {
 }
 
 function pickTitle(doc, html) {
-  /* og:title */
   let t = doc.querySelector('meta[property="og:title"]')?.content?.trim() || '';
-  /* JSON-LD */
   if (!t) {
     const ld = findLD(doc, ['Product','ItemPage','Thing']);
     t = ld?.name || ld?.headline || '';
   }
-  /* SSR JSON */
   if (!t) t = deepFind(extractSSR(html), ['name','title','productName','goodsName']) || '';
-  /* Heading */
   if (!t) t = doc.querySelector('h1,.product-name,.goods-name,.item-name')?.textContent?.trim() || '';
-  /* Page title */
   if (!t) t = doc.querySelector('title')?.textContent?.trim() || '';
   return t.split(/\s*[-|—–|_]\s*/)[0].trim().slice(0, 140);
 }
@@ -275,20 +492,16 @@ function pickImages(doc, html) {
     seen.add(abs); imgs.push(abs);
   };
 
-  /* og:image */
   add(doc.querySelector('meta[property="og:image"]')?.content || '');
 
-  /* JSON-LD */
   const ld = findLD(doc, ['Product','ImageGallery']);
   if (ld) {
     const raw = Array.isArray(ld.image) ? ld.image : [ld.image];
     raw.forEach(i => add(typeof i === 'string' ? i : i?.url || i?.contentUrl || ''));
   }
 
-  /* SSR JSON images */
   deepImages_add(extractSSR(html), imgs, seen);
 
-  /* DOM */
   const sels = ['.swiper-slide img','.product-images img','[class*="goods"] img','[class*="product"] img','figure img','.post-content img','article img','main img'];
   for (const s of sels) {
     try {
