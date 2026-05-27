@@ -99,157 +99,143 @@
 
     <!-- ── RIGHT: robot ── -->
     <div class="hero-robot" id="hero-robot">
-      <svg id="robot-svg" viewBox="0 0 300 500" xmlns="http://www.w3.org/2000/svg" fill="none">
+      <svg id="robot-svg" viewBox="0 0 300 520" xmlns="http://www.w3.org/2000/svg" fill="none">
         <defs>
-          <radialGradient id="rbg" cx="50%" cy="38%" r="62%">
-            <stop offset="0%" stop-color="#1c1c38"/>
-            <stop offset="55%" stop-color="#0e0e22"/>
-            <stop offset="100%" stop-color="#06060f"/>
-          </radialGradient>
-          <linearGradient id="rhl" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(255,255,255,0.15)"/>
-            <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+          <linearGradient id="rg-b" x1="0.2" y1="0" x2="0.8" y2="1">
+            <stop offset="0%" stop-color="#121218"/>
+            <stop offset="100%" stop-color="#030305"/>
           </linearGradient>
-          <filter id="fc" x="-100%" y="-100%" width="300%" height="300%">
-            <feGaussianBlur stdDeviation="4" result="b"/>
+          <linearGradient id="rg-b2" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#0e0e14"/>
+            <stop offset="100%" stop-color="#020203"/>
+          </linearGradient>
+          <filter id="fg" x="-120%" y="-120%" width="340%" height="340%">
+            <feGaussianBlur stdDeviation="5" result="b"/>
             <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
           </filter>
-          <filter id="fc2" x="-60%" y="-60%" width="220%" height="220%">
+          <filter id="fg2" x="-70%" y="-70%" width="240%" height="240%">
             <feGaussianBlur stdDeviation="2.5" result="b"/>
             <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
           </filter>
         </defs>
 
-        <!-- ground glow -->
-        <ellipse cx="150" cy="496" rx="80" ry="9" fill="rgba(0,229,255,0.07)"/>
+        <!-- ground halo -->
+        <ellipse cx="150" cy="512" rx="55" ry="7" fill="rgba(0,229,255,0.06)"/>
+        <ellipse cx="150" cy="512" rx="30" ry="3.5" fill="rgba(0,229,255,0.1)"/>
 
-        <!-- LEGS -->
-        <path d="M108,350 Q100,375 102,410 L129,410 Q124,375 130,350Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.18)" stroke-width="0.8"/>
-        <path d="M192,350 Q200,375 198,410 L171,410 Q176,375 170,350Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.18)" stroke-width="0.8"/>
-        <path d="M112,355 Q107,382 108,406" stroke="rgba(255,255,255,0.07)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-        <path d="M188,355 Q193,382 192,406" stroke="rgba(255,255,255,0.07)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-        <!-- knee caps -->
-        <ellipse cx="115" cy="412" rx="14" ry="11" fill="#08081c" stroke="rgba(0,229,255,0.24)" stroke-width="0.8"/>
-        <ellipse cx="115" cy="412" rx="8" ry="6" fill="url(#rbg)"/>
-        <ellipse cx="185" cy="412" rx="14" ry="11" fill="#08081c" stroke="rgba(0,229,255,0.24)" stroke-width="0.8"/>
-        <ellipse cx="185" cy="412" rx="8" ry="6" fill="url(#rbg)"/>
-        <!-- lower legs -->
-        <path d="M101,408 Q97,438 100,468 L130,468 Q127,438 129,408Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.15)" stroke-width="0.8"/>
-        <path d="M199,408 Q203,438 200,468 L170,468 Q173,438 171,408Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.15)" stroke-width="0.8"/>
-        <!-- shin accent lines -->
-        <line x1="110" y1="420" x2="110" y2="458" stroke="rgba(0,229,255,0.28)" stroke-width="0.9"/>
-        <line x1="190" y1="420" x2="190" y2="458" stroke="rgba(0,229,255,0.28)" stroke-width="0.9"/>
+        <!-- ── LEGS ── -->
+        <path d="M126,278 Q122,305 123,346 L140,346 Q137,305 136,278Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.06)" stroke-width="0.7"/>
+        <path d="M174,278 Q178,305 177,346 L160,346 Q163,305 164,278Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.06)" stroke-width="0.7"/>
+        <!-- thigh rim lights -->
+        <path d="M129,281 Q125,308 126,344" stroke="rgba(255,255,255,0.07)" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+        <path d="M171,281 Q175,308 174,344" stroke="rgba(255,255,255,0.07)" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+        <!-- knees -->
+        <ellipse cx="131" cy="348" rx="10" ry="8" fill="#06060a" stroke="rgba(255,255,255,0.07)" stroke-width="0.6"/>
+        <ellipse cx="169" cy="348" rx="10" ry="8" fill="#06060a" stroke="rgba(255,255,255,0.07)" stroke-width="0.6"/>
+        <!-- shins -->
+        <path d="M121,344 Q118,372 120,405 L142,405 Q140,372 141,344Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.05)" stroke-width="0.6"/>
+        <path d="M179,344 Q182,372 180,405 L158,405 Q160,372 159,344Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.05)" stroke-width="0.6"/>
+        <!-- shin cyan strips -->
+        <line x1="129" y1="354" x2="128" y2="396" stroke="rgba(0,229,255,0.3)" stroke-width="0.8"/>
+        <line x1="171" y1="354" x2="172" y2="396" stroke="rgba(0,229,255,0.3)" stroke-width="0.8"/>
         <!-- feet -->
-        <path d="M93,466 Q90,473 93,479 Q100,486 120,486 Q136,486 139,479 Q141,473 138,466Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.18)" stroke-width="0.8"/>
-        <path d="M207,466 Q210,473 207,479 Q200,486 180,486 Q164,486 161,479 Q159,473 162,466Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.18)" stroke-width="0.8"/>
+        <path d="M114,403 Q110,410 113,417 L145,417 Q147,410 144,403Z" fill="url(#rg-b2)" stroke="rgba(255,255,255,0.06)" stroke-width="0.6"/>
+        <path d="M186,403 Q190,410 187,417 L155,417 Q153,410 156,403Z" fill="url(#rg-b2)" stroke="rgba(255,255,255,0.06)" stroke-width="0.6"/>
 
-        <!-- PELVIS -->
-        <path d="M88,340 Q85,358 90,372 Q110,383 150,384 Q190,383 210,372 Q215,358 212,340 Q185,335 150,334 Q115,335 88,340Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.2)" stroke-width="0.8"/>
-        <ellipse cx="108" cy="368" rx="16" ry="13" fill="#080818" stroke="rgba(0,229,255,0.25)" stroke-width="0.8"/>
-        <ellipse cx="108" cy="368" rx="9" ry="7" fill="url(#rbg)"/>
-        <ellipse cx="192" cy="368" rx="16" ry="13" fill="#080818" stroke="rgba(0,229,255,0.25)" stroke-width="0.8"/>
-        <ellipse cx="192" cy="368" rx="9" ry="7" fill="url(#rbg)"/>
-        <path d="M100,344 Q150,341 200,344" stroke="rgba(0,229,255,0.14)" stroke-width="0.7" fill="none"/>
+        <!-- ── PELVIS ── -->
+        <path d="M118,255 Q114,265 116,278 Q130,286 150,287 Q170,286 184,278 Q186,265 182,255 Q168,250 150,250 Q132,250 118,255Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.07)" stroke-width="0.7"/>
+        <ellipse cx="126" cy="276" rx="10" ry="8" fill="#050508" stroke="rgba(255,255,255,0.07)" stroke-width="0.5"/>
+        <ellipse cx="174" cy="276" rx="10" ry="8" fill="#050508" stroke="rgba(255,255,255,0.07)" stroke-width="0.5"/>
 
-        <!-- TORSO -->
-        <path d="M88,195 Q72,210 70,252 Q68,296 74,332 Q88,347 150,348 Q212,347 226,332 Q232,296 230,252 Q228,210 212,195 Q188,183 150,181 Q112,183 88,195Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.24)" stroke-width="1"/>
-        <path d="M97,200 Q88,216 88,242" stroke="rgba(255,255,255,0.11)" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <!-- ── WAIST ── -->
+        <path d="M124,218 Q121,232 120,252 Q135,258 150,258 Q165,258 180,252 Q179,232 176,218 Q164,214 150,213 Q136,214 124,218Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.06)" stroke-width="0.6"/>
+
+        <!-- ── TORSO ── -->
+        <path d="M105,145 Q98,162 98,185 Q98,212 107,225 Q122,234 150,234 Q178,234 193,225 Q202,212 202,185 Q202,162 195,145 Q180,135 150,134 Q120,135 105,145Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.08)" stroke-width="0.8"/>
+        <!-- chest left rim -->
+        <path d="M108,149 Q100,165 100,188" stroke="rgba(255,255,255,0.1)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
         <!-- chest panel -->
-        <rect x="118" y="210" width="64" height="92" rx="8" fill="#05050e" stroke="rgba(0,229,255,0.34)" stroke-width="0.9"/>
-        <rect x="121" y="213" width="58" height="86" rx="6" fill="none" stroke="rgba(0,229,255,0.1)" stroke-width="0.5"/>
-        <line x1="128" y1="228" x2="172" y2="228" stroke="rgba(0,229,255,0.5)" stroke-width="0.9"/>
-        <line x1="125" y1="238" x2="175" y2="238" stroke="rgba(0,229,255,0.25)" stroke-width="0.6"/>
-        <line x1="127" y1="248" x2="173" y2="248" stroke="rgba(0,229,255,0.18)" stroke-width="0.6"/>
-        <!-- core reactor -->
-        <ellipse cx="150" cy="274" rx="19" ry="13" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.38)" stroke-width="1" filter="url(#fc2)"/>
-        <ellipse cx="150" cy="274" rx="11" ry="7.5" fill="rgba(0,229,255,0.14)" filter="url(#fc2)"/>
-        <ellipse id="r-core" cx="150" cy="274" rx="6" ry="4" fill="rgba(0,229,255,0.75)" filter="url(#fc)"/>
-        <!-- hex accents -->
-        <polygon points="95,242 103,237 111,242 111,252 103,257 95,252" fill="none" stroke="rgba(0,229,255,0.2)" stroke-width="0.7"/>
-        <polygon points="189,242 197,237 205,242 205,252 197,257 189,252" fill="none" stroke="rgba(0,229,255,0.2)" stroke-width="0.7"/>
-        <!-- abdomen lines -->
-        <path d="M98,305 Q150,316 202,305" stroke="rgba(0,229,255,0.13)" stroke-width="0.8" fill="none"/>
-        <path d="M96,320 Q150,332 204,320" stroke="rgba(0,229,255,0.1)" stroke-width="0.8" fill="none"/>
+        <rect x="131" y="155" width="38" height="54" rx="5" fill="#020205" stroke="rgba(0,229,255,0.32)" stroke-width="0.7"/>
+        <line x1="137" y1="168" x2="163" y2="168" stroke="rgba(0,229,255,0.45)" stroke-width="0.7"/>
+        <line x1="135" y1="177" x2="165" y2="177" stroke="rgba(0,229,255,0.2)" stroke-width="0.5"/>
+        <!-- reactor -->
+        <ellipse cx="150" cy="193" rx="9" ry="6" fill="rgba(0,229,255,0.06)" stroke="rgba(0,229,255,0.38)" stroke-width="0.8" filter="url(#fg2)"/>
+        <ellipse id="r-core" cx="150" cy="193" rx="5" ry="3.2" fill="rgba(0,229,255,0.8)" filter="url(#fg)"/>
         <!-- side vents -->
-        <path d="M72,262 L80,257 M72,272 L80,267 M72,282 L80,277 M72,292 L80,287" stroke="rgba(0,229,255,0.22)" stroke-width="1.1" fill="none"/>
-        <path d="M228,262 L220,257 M228,272 L220,267 M228,282 L220,277 M228,292 L220,287" stroke="rgba(0,229,255,0.22)" stroke-width="1.1" fill="none"/>
+        <path d="M100,170 L106,166 M100,179 L106,175 M100,188 L106,184" stroke="rgba(0,229,255,0.18)" stroke-width="0.9" fill="none"/>
+        <path d="M200,170 L194,166 M200,179 L194,175 M200,188 L194,184" stroke="rgba(0,229,255,0.18)" stroke-width="0.9" fill="none"/>
 
-        <!-- LEFT ARM -->
-        <ellipse cx="80" cy="206" rx="20" ry="18" fill="#08081c" stroke="rgba(0,229,255,0.28)" stroke-width="0.9"/>
-        <ellipse cx="80" cy="206" rx="12" ry="10" fill="url(#rbg)" stroke="rgba(0,229,255,0.14)" stroke-width="0.6"/>
-        <path d="M65,211 Q50,233 47,274 L70,280 Q68,239 78,216Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.15)" stroke-width="0.7"/>
-        <path d="M68,220 Q61,248 58,270" stroke="rgba(0,229,255,0.28)" stroke-width="1.1" fill="none"/>
-        <ellipse cx="58" cy="282" rx="13" ry="11" fill="#08081c" stroke="rgba(0,229,255,0.22)" stroke-width="0.7"/>
-        <ellipse cx="58" cy="282" rx="7" ry="6" fill="url(#rbg)"/>
-        <path d="M45,277 Q40,307 43,340 L66,338 Q62,305 62,274Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.15)" stroke-width="0.7"/>
-        <path d="M48,287 Q45,312 46,334" stroke="rgba(0,229,255,0.22)" stroke-width="0.9" fill="none"/>
-        <path d="M37,338 Q32,352 37,362 Q45,370 60,368 Q72,364 73,352 Q72,338 66,336Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.15)" stroke-width="0.7"/>
+        <!-- ── SHOULDER PLATES ── -->
+        <path d="M84,136 Q70,146 68,164 Q71,175 84,173 Q94,168 98,157 Q102,145 95,137Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.07)" stroke-width="0.6"/>
+        <path d="M74,150 Q71,162 74,171" stroke="rgba(255,255,255,0.09)" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+        <path d="M216,136 Q230,146 232,164 Q229,175 216,173 Q206,168 202,157 Q198,145 205,137Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.07)" stroke-width="0.6"/>
+        <path d="M226,150 Q229,162 226,171" stroke="rgba(255,255,255,0.09)" stroke-width="1.2" fill="none" stroke-linecap="round"/>
 
-        <!-- RIGHT ARM -->
-        <ellipse cx="220" cy="206" rx="20" ry="18" fill="#08081c" stroke="rgba(0,229,255,0.28)" stroke-width="0.9"/>
-        <ellipse cx="220" cy="206" rx="12" ry="10" fill="url(#rbg)" stroke="rgba(0,229,255,0.14)" stroke-width="0.6"/>
-        <path d="M235,211 Q250,233 253,274 L230,280 Q232,239 222,216Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.15)" stroke-width="0.7"/>
-        <path d="M232,220 Q239,248 242,270" stroke="rgba(0,229,255,0.28)" stroke-width="1.1" fill="none"/>
-        <ellipse cx="242" cy="282" rx="13" ry="11" fill="#08081c" stroke="rgba(0,229,255,0.22)" stroke-width="0.7"/>
-        <ellipse cx="242" cy="282" rx="7" ry="6" fill="url(#rbg)"/>
-        <path d="M255,277 Q260,307 257,340 L234,338 Q238,305 238,274Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.15)" stroke-width="0.7"/>
-        <path d="M252,287 Q255,312 254,334" stroke="rgba(0,229,255,0.22)" stroke-width="0.9" fill="none"/>
-        <path d="M263,338 Q268,352 263,362 Q255,370 240,368 Q228,364 227,352 Q228,338 234,336Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.15)" stroke-width="0.7"/>
+        <!-- ── LEFT ARM ── -->
+        <ellipse cx="90" cy="152" rx="13" ry="12" fill="#07070c" stroke="rgba(255,255,255,0.08)" stroke-width="0.6"/>
+        <ellipse cx="90" cy="152" rx="7" ry="6.5" fill="url(#rg-b)"/>
+        <path d="M79,157 Q71,175 70,212 L86,215 Q84,178 86,160Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.05)" stroke-width="0.6"/>
+        <path d="M73,165 Q68,190 68,208" stroke="rgba(0,229,255,0.22)" stroke-width="0.8" fill="none"/>
+        <ellipse cx="78" cy="217" rx="9" ry="7.5" fill="#050508" stroke="rgba(255,255,255,0.07)" stroke-width="0.5"/>
+        <path d="M69,213 Q63,238 65,268 L82,267 Q79,237 79,211Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.05)" stroke-width="0.6"/>
+        <path d="M60,265 Q55,277 59,286 Q66,292 78,290 Q88,286 88,275 Q87,264 82,262Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.05)" stroke-width="0.6"/>
 
-        <!-- SHOULDER PADS -->
-        <path d="M64,188 Q47,200 45,222 Q48,237 64,235 Q76,231 82,219 Q88,205 82,192Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.22)" stroke-width="0.8"/>
-        <path d="M55,206 Q52,220 56,230" stroke="rgba(255,255,255,0.1)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-        <path d="M236,188 Q253,200 255,222 Q252,237 236,235 Q224,231 218,219 Q212,205 218,192Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.22)" stroke-width="0.8"/>
-        <path d="M245,206 Q248,220 244,230" stroke="rgba(255,255,255,0.1)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+        <!-- ── RIGHT ARM ── -->
+        <ellipse cx="210" cy="152" rx="13" ry="12" fill="#07070c" stroke="rgba(255,255,255,0.08)" stroke-width="0.6"/>
+        <ellipse cx="210" cy="152" rx="7" ry="6.5" fill="url(#rg-b)"/>
+        <path d="M221,157 Q229,175 230,212 L214,215 Q216,178 214,160Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.05)" stroke-width="0.6"/>
+        <path d="M227,165 Q232,190 232,208" stroke="rgba(0,229,255,0.22)" stroke-width="0.8" fill="none"/>
+        <ellipse cx="222" cy="217" rx="9" ry="7.5" fill="#050508" stroke="rgba(255,255,255,0.07)" stroke-width="0.5"/>
+        <path d="M231,213 Q237,238 235,268 L218,267 Q221,237 221,211Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.05)" stroke-width="0.6"/>
+        <path d="M240,265 Q245,277 241,286 Q234,292 222,290 Q212,286 212,275 Q213,264 218,262Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.05)" stroke-width="0.6"/>
 
-        <!-- NECK -->
-        <path d="M132,156 L128,182 L172,182 L168,156Z" fill="#07071a" stroke="rgba(0,229,255,0.18)" stroke-width="0.7"/>
-        <line x1="128" y1="165" x2="172" y2="165" stroke="rgba(0,229,255,0.12)" stroke-width="0.5"/>
-        <line x1="128" y1="175" x2="172" y2="175" stroke="rgba(0,229,255,0.12)" stroke-width="0.5"/>
+        <!-- ── NECK ── -->
+        <rect x="139" y="121" width="22" height="16" rx="3" fill="#040407" stroke="rgba(255,255,255,0.06)" stroke-width="0.5"/>
+        <line x1="139" y1="127" x2="161" y2="127" stroke="rgba(0,229,255,0.1)" stroke-width="0.4"/>
+        <line x1="139" y1="133" x2="161" y2="133" stroke="rgba(0,229,255,0.1)" stroke-width="0.4"/>
 
-        <!-- HEAD GROUP (animated by JS) -->
+        <!-- ── HEAD (cursor-tracked) ── -->
         <g id="r-head">
-          <!-- helmet -->
-          <path d="M103,126 Q103,70 150,60 Q197,70 197,126 Q197,162 174,172 Q150,180 126,172 Q103,162 103,126Z" fill="url(#rbg)" stroke="rgba(0,229,255,0.3)" stroke-width="1"/>
-          <!-- top plate -->
-          <path d="M120,86 Q150,70 180,86 Q188,100 184,114 Q170,106 150,104 Q130,106 116,114 Q112,100 120,86Z" fill="#050510" stroke="rgba(0,229,255,0.15)" stroke-width="0.7"/>
-          <!-- helmet highlights -->
-          <path d="M113,94 Q108,82 116,72" stroke="rgba(255,255,255,0.14)" stroke-width="2" fill="none" stroke-linecap="round"/>
-          <path d="M185,104 Q192,96 186,86" stroke="rgba(255,255,255,0.05)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-          <!-- VISOR -->
-          <rect x="112" y="108" width="76" height="34" rx="9" fill="#00010a" stroke="rgba(0,229,255,0.45)" stroke-width="1"/>
-          <rect x="114" y="110" width="72" height="30" rx="7" fill="rgba(0,229,255,0.03)"/>
-          <path d="M116,110 L184,110" stroke="rgba(0,229,255,0.16)" stroke-width="0.5"/>
+          <!-- main helmet -->
+          <path d="M119,88 Q119,48 150,40 Q181,48 181,88 Q181,116 166,124 Q150,130 134,124 Q119,116 119,88Z" fill="url(#rg-b)" stroke="rgba(255,255,255,0.09)" stroke-width="0.8"/>
+          <!-- dome top -->
+          <path d="M128,63 Q150,48 172,63 Q178,74 175,86 Q164,79 150,78 Q136,79 125,86 Q122,74 128,63Z" fill="#060609" stroke="rgba(255,255,255,0.05)" stroke-width="0.5"/>
+          <!-- helmet left rim highlight -->
+          <path d="M121,70 Q117,59 124,50" stroke="rgba(255,255,255,0.13)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          <path d="M120,90 Q118,102 122,112" stroke="rgba(255,255,255,0.07)" stroke-width="1" fill="none" stroke-linecap="round"/>
+
+          <!-- VISOR SLIT -->
+          <rect x="121" y="84" width="58" height="22" rx="7" fill="#00000a" stroke="rgba(0,229,255,0.52)" stroke-width="0.9"/>
+          <rect x="123" y="86" width="54" height="18" rx="6" fill="rgba(0,229,255,0.04)"/>
+          <!-- visor top inner glow -->
+          <rect x="123" y="86" width="54" height="5" rx="4" fill="rgba(0,229,255,0.1)"/>
+
           <!-- EYE SOCKETS -->
-          <ellipse cx="133" cy="125" rx="14" ry="9.5" fill="#000208"/>
-          <ellipse cx="167" cy="125" rx="14" ry="9.5" fill="#000208"/>
-          <!-- eye outer glow -->
-          <ellipse id="r-glow-l" cx="133" cy="125" rx="11" ry="7.5" fill="rgba(0,229,255,0.45)" filter="url(#fc)"/>
-          <ellipse id="r-glow-r" cx="167" cy="125" rx="11" ry="7.5" fill="rgba(0,229,255,0.45)" filter="url(#fc)"/>
-          <!-- eye iris -->
-          <ellipse id="r-eye-l" cx="133" cy="125" rx="8" ry="5.5" fill="rgba(0,229,255,0.92)"/>
-          <ellipse id="r-eye-r" cx="167" cy="125" rx="8" ry="5.5" fill="rgba(0,229,255,0.92)"/>
-          <!-- pupils (move with cursor) -->
-          <ellipse id="r-pupil-l" cx="133" cy="125" rx="3.5" ry="2.5" fill="#00040c"/>
-          <ellipse id="r-pupil-r" cx="167" cy="125" rx="3.5" ry="2.5" fill="#00040c"/>
-          <!-- eye specular -->
-          <ellipse cx="129" cy="121" rx="2" ry="1.5" fill="rgba(255,255,255,0.7)"/>
-          <ellipse cx="163" cy="121" rx="2" ry="1.5" fill="rgba(255,255,255,0.7)"/>
-          <!-- ear sensors -->
-          <ellipse cx="101" cy="122" rx="7" ry="9" fill="#07071c" stroke="rgba(0,229,255,0.28)" stroke-width="0.8"/>
-          <ellipse cx="101" cy="122" rx="3.5" ry="4.5" fill="rgba(0,229,255,0.2)" filter="url(#fc2)"/>
-          <ellipse cx="199" cy="122" rx="7" ry="9" fill="#07071c" stroke="rgba(0,229,255,0.28)" stroke-width="0.8"/>
-          <ellipse cx="199" cy="122" rx="3.5" ry="4.5" fill="rgba(0,229,255,0.2)" filter="url(#fc2)"/>
-          <!-- jaw -->
-          <path d="M125,152 Q150,162 175,152 Q170,172 150,175 Q130,172 125,152Z" fill="#09091e" stroke="rgba(0,229,255,0.12)" stroke-width="0.6"/>
-          <!-- head vents -->
-          <path d="M104,116 L110,110 M104,126 L110,120 M104,136 L110,130" stroke="rgba(0,229,255,0.22)" stroke-width="1" fill="none" stroke-linecap="round"/>
-          <path d="M196,116 L190,110 M196,126 L190,120 M196,136 L190,130" stroke="rgba(0,229,255,0.22)" stroke-width="1" fill="none" stroke-linecap="round"/>
-          <!-- status light + antenna -->
-          <line x1="150" y1="60" x2="150" y2="52" stroke="rgba(0,229,255,0.3)" stroke-width="1.5"/>
-          <ellipse cx="150" cy="50" rx="4" ry="4" fill="rgba(0,255,136,0.12)" filter="url(#fc)"/>
-          <ellipse id="r-status" cx="150" cy="50" rx="3" ry="3" fill="rgba(0,255,136,0.85)" filter="url(#fc2)"/>
-          <ellipse cx="150" cy="50" rx="1.5" ry="1.5" fill="#00ff88"/>
+          <ellipse cx="136" cy="95" rx="10.5" ry="7" fill="#00010a"/>
+          <ellipse cx="164" cy="95" rx="10.5" ry="7" fill="#00010a"/>
+          <!-- outer glow -->
+          <ellipse id="r-glow-l" cx="136" cy="95" rx="8.5" ry="5.5" fill="rgba(0,229,255,0.42)" filter="url(#fg)"/>
+          <ellipse id="r-glow-r" cx="164" cy="95" rx="8.5" ry="5.5" fill="rgba(0,229,255,0.42)" filter="url(#fg)"/>
+          <!-- iris -->
+          <ellipse id="r-eye-l" cx="136" cy="95" rx="6" ry="3.8" fill="rgba(0,229,255,0.9)"/>
+          <ellipse id="r-eye-r" cx="164" cy="95" rx="6" ry="3.8" fill="rgba(0,229,255,0.9)"/>
+          <!-- pupils -->
+          <ellipse id="r-pupil-l" cx="136" cy="95" rx="2.5" ry="1.8" fill="#00020c"/>
+          <ellipse id="r-pupil-r" cx="164" cy="95" rx="2.5" ry="1.8" fill="#00020c"/>
+          <!-- specular -->
+          <ellipse cx="133" cy="92" rx="1.5" ry="1" fill="rgba(255,255,255,0.7)"/>
+          <ellipse cx="161" cy="92" rx="1.5" ry="1" fill="rgba(255,255,255,0.7)"/>
+
+          <!-- chin -->
+          <path d="M130,114 Q150,122 170,114 Q166,127 150,130 Q134,127 130,114Z" fill="#06060a" stroke="rgba(255,255,255,0.05)" stroke-width="0.4"/>
+          <!-- side vents -->
+          <path d="M120,82 L124,77 M120,91 L124,86 M120,100 L124,95" stroke="rgba(0,229,255,0.2)" stroke-width="0.9" fill="none" stroke-linecap="round"/>
+          <path d="M180,82 L176,77 M180,91 L176,86 M180,100 L176,95" stroke="rgba(0,229,255,0.2)" stroke-width="0.9" fill="none" stroke-linecap="round"/>
+          <!-- antenna -->
+          <line x1="150" y1="40" x2="150" y2="30" stroke="rgba(0,229,255,0.28)" stroke-width="1.2"/>
+          <ellipse cx="150" cy="28" rx="2.5" ry="2.5" fill="rgba(0,255,136,0.1)" filter="url(#fg)"/>
+          <ellipse id="r-status" cx="150" cy="28" rx="2" ry="2" fill="rgba(0,255,136,0.88)" filter="url(#fg2)"/>
+          <ellipse cx="150" cy="28" rx="1" ry="1" fill="#00ff88"/>
         </g>
       </svg>
     </div><!-- /hero-robot -->
