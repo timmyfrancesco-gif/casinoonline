@@ -1319,9 +1319,127 @@ function showAuthErr(id, msg) {
   const p = new URLSearchParams(window.location.search);
   const r = p.get('room');
   if (r && r.length === 6 && /^\d+$/.test(r)) {
-    // try to join directly
     gun.get(DB_NS).get('rooms').get(r).once(data => {
       if (data && data.created) enterRoom(r);
     });
   }
+})();
+
+/* ════════════════════════════════════════════
+   ROBOT CURSOR TRACKER — spring physics
+════════════════════════════════════════════ */
+(function RobotTracker() {
+  const svg        = document.getElementById('robot-svg');
+  const head       = document.getElementById('r-head');
+  const eyeL       = document.getElementById('r-eye-l');
+  const eyeR       = document.getElementById('r-eye-r');
+  const glowL      = document.getElementById('r-glow-l');
+  const glowR      = document.getElementById('r-glow-r');
+  const pupilL     = document.getElementById('r-pupil-l');
+  const pupilR     = document.getElementById('r-pupil-r');
+  if (!svg || !head) return;
+
+  /* Base positions of pupils in SVG viewbox coords */
+  const BASE_L  = { x: 133, y: 125 };
+  const BASE_R  = { x: 167, y: 125 };
+  const HEAD_CX = 150; // head pivot X in viewbox
+  const HEAD_CY = 120; // head pivot Y in viewbox
+
+  /* Spring state */
+  let tHeadRot = 0, cHeadRot = 0, vHeadRot = 0; // Y-axis rotation (°)
+  let tHeadTilt = 0, cHeadTilt = 0, vHeadTilt = 0; // X-axis tilt (°)
+  let tPupX = 0, cPupX = 0, vPupX = 0;
+  let tPupY = 0, cPupY = 0, vPupY = 0;
+  let tBodyX = 0, cBodyX = 0, vBodyX = 0;
+
+  /* Spring constants */
+  const K_HEAD  = 0.055; const D_HEAD  = 0.76;
+  const K_EYE   = 0.10;  const D_EYE   = 0.72;
+  const K_BODY  = 0.030; const D_BODY  = 0.82;
+
+  let breathT = 0;
+
+  document.addEventListener('mousemove', e => {
+    /* Map mouse to SVG viewbox space */
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    const scaleX = 300 / rect.width;
+    const scaleY = 500 / rect.height;
+    const svgX = (e.clientX - rect.left) * scaleX;
+    const svgY = (e.clientY - rect.top)  * scaleY;
+
+    const dx = svgX - HEAD_CX;
+    const dy = svgY - HEAD_CY;
+
+    /* Head rotation — Y axis (side-to-side), max ±22° */
+    tHeadRot  = Math.max(-22, Math.min(22, dx * 0.065));
+    /* Head tilt — simulated X axis (up/down), max ±14° */
+    tHeadTilt = Math.max(-14, Math.min(14, dy * 0.04));
+    /* Pupil offset — smaller range */
+    tPupX = Math.max(-4.5, Math.min(4.5, dx * 0.018));
+    tPupY = Math.max(-3.0, Math.min(3.0, dy * 0.012));
+    /* Body lean */
+    tBodyX = Math.max(-4, Math.min(4, dx * 0.012));
+  });
+
+  function tick() {
+    breathT += 0.016;
+
+    /* ── Spring physics for all values ── */
+    vHeadRot  = (vHeadRot  + (tHeadRot  - cHeadRot)  * K_HEAD) * D_HEAD;
+    vHeadTilt = (vHeadTilt + (tHeadTilt - cHeadTilt) * K_HEAD) * D_HEAD;
+    vPupX     = (vPupX     + (tPupX     - cPupX)     * K_EYE)  * D_EYE;
+    vPupY     = (vPupY     + (tPupY     - cPupY)     * K_EYE)  * D_EYE;
+    vBodyX    = (vBodyX    + (tBodyX    - cBodyX)     * K_BODY) * D_BODY;
+
+    cHeadRot  += vHeadRot;
+    cHeadTilt += vHeadTilt;
+    cPupX     += vPupX;
+    cPupY     += vPupY;
+    cBodyX    += vBodyX;
+
+    /* ── Head transform ──
+       Y-rotation: actual SVG rotate around pivot
+       X-tilt: fake via scaleY + translateY
+    */
+    const tiltScale  = 1 - Math.abs(cHeadTilt) * 0.005; // slight Y squish
+    const tiltOffset = cHeadTilt * 0.9;                  // vertical shift
+    const rotOffset  = cHeadRot  * 0.55;                 // horizontal shift for parallax
+
+    head.setAttribute('transform',
+      `translate(${rotOffset}, ${tiltOffset}) ` +
+      `rotate(${cHeadRot * 0.55}, ${HEAD_CX}, ${HEAD_CY}) ` +
+      `scale(1, ${tiltScale})`
+    );
+
+    /* ── Pupils tracking ── */
+    if (pupilL) {
+      pupilL.setAttribute('cx', BASE_L.x + cPupX);
+      pupilL.setAttribute('cy', BASE_L.y + cPupY);
+    }
+    if (pupilR) {
+      pupilR.setAttribute('cx', BASE_R.x + cPupX);
+      pupilR.setAttribute('cy', BASE_R.y + cPupY);
+    }
+    /* Eye glow follows slightly */
+    if (glowL) {
+      glowL.setAttribute('cx', BASE_L.x + cPupX * 0.4);
+      glowL.setAttribute('cy', BASE_L.y + cPupY * 0.4);
+    }
+    if (glowR) {
+      glowR.setAttribute('cx', BASE_R.x + cPupX * 0.4);
+      glowR.setAttribute('cy', BASE_R.y + cPupY * 0.4);
+    }
+    if (eyeL) {
+      eyeL.setAttribute('cx', BASE_L.x + cPupX * 0.25);
+      eyeL.setAttribute('cy', BASE_L.y + cPupY * 0.25);
+    }
+    if (eyeR) {
+      eyeR.setAttribute('cx', BASE_R.x + cPupX * 0.25);
+      eyeR.setAttribute('cy', BASE_R.y + cPupY * 0.25);
+    }
+
+    requestAnimationFrame(tick);
+  }
+  tick();
 })();
