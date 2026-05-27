@@ -740,6 +740,42 @@ body {
   box-shadow: 0 0 15px rgba(0,229,255,.2);
 }
 
+/* ── FETCH BAR ── */
+.fetch-bar {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: 9px;
+  background: rgba(0,0,0,.35);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 14px; margin-top: 6px;
+  font-family: var(--font-m); font-size: .72rem;
+  transition: border-color .3s, background .3s;
+}
+.fetch-bar.hidden { display: none; }
+.fetch-bar.searching { border-color: rgba(0,229,255,.3); }
+.fetch-bar.ok        { border-color: rgba(0,255,136,.4); background: rgba(0,255,136,.04); }
+.fetch-bar.warn      { border-color: rgba(255,214,10,.35); background: rgba(255,214,10,.03); }
+.fetch-bar.manual    { border-color: rgba(200,230,255,.15); }
+
+.fb-icon { font-size: .9rem; flex-shrink: 0; }
+.fb-text { color: var(--text); letter-spacing: .04em; flex: 1; }
+.fetch-bar.ok   .fb-text { color: var(--green); }
+.fetch-bar.warn .fb-text { color: var(--yellow); }
+.fetch-bar.manual .fb-text { color: var(--muted); }
+
+/* scanning line animation */
+.fb-scan {
+  position: absolute; top: 0; left: -100%; width: 60%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(0,229,255,.12), transparent);
+  pointer-events: none;
+}
+.fetch-bar.searching .fb-scan {
+  animation: fb-sweep 1.4s linear infinite;
+}
+@keyframes fb-sweep { to { left: 140%; } }
+
+/* spinning icon when searching */
+.fb-icon.spin { animation: spin .8s linear infinite; display: inline-block; }
+
 /* ── SCROLL REVEAL ── */
 .scroll-reveal {
   opacity: 0; transform: translateY(28px);

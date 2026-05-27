@@ -218,14 +218,14 @@
     <h2 class="modal-title" id="modal-title-text">// NUOVO ORDINE</h2>
 
     <div class="fg full">
-      <label>Link prodotto</label>
-      <div class="input-row">
-        <input type="url" id="f-link" placeholder="https://cnfans.com/product/?id=..." />
-        <button class="fetch-btn" id="btn-fetch" title="Carica info automaticamente">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 11-9-9c2.52 0 4.85.99 6.57 2.59L21 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21 3v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        </button>
+      <label>Link prodotto — incolla e cerco tutto su UUFinds</label>
+      <input type="url" id="f-link" placeholder="https://cnfans.com/product/?id=..." autocomplete="off"/>
+      <!-- auto-search status bar -->
+      <div class="fetch-bar hidden" id="fetch-bar">
+        <span class="fb-icon" id="fb-icon"></span>
+        <span class="fb-text" id="fb-text"></span>
+        <div class="fb-scan" id="fb-scan"></div>
       </div>
-      <div class="fetch-status hidden" id="fetch-status"></div>
     </div>
 
     <div class="fg full">

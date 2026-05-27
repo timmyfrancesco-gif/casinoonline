@@ -491,86 +491,231 @@ function renderDZPreviews() {
   });
 }
 
-/* ── AUTO-FETCH PRODUCT INFO ── */
-$('btn-fetch').addEventListener('click', async () => {
-  const url = $('f-link').value.trim();
-  if (!url) { toast('Inserisci prima il link', 'err'); return; }
-  const btn = $('btn-fetch');
-  const status = $('fetch-status');
-  btn.classList.add('loading');
-  status.classList.remove('hidden'); status.className = 'fetch-status';
-  status.textContent = '// ricerca info prodotto...';
-  try {
-    const info = await fetchProductInfo(url);
-    if (info) {
-      if (info.title && !$('f-name').value) $('f-name').value = info.title;
-      if (info.image && pendingPhotos.length === 0) {
-        // download and compress the remote image
-        status.textContent = '// download immagine...';
-        await fetchRemoteImage(info.image);
-      }
-      status.textContent = '✓ Info caricate con successo!';
-      toast('Info prodotto caricate!', 'ok');
-    } else {
-      throw new Error('nessun dato');
-    }
-  } catch {
-    status.classList.add('err');
-    status.textContent = '// impossibile caricare info — compila manualmente';
-  } finally {
-    btn.classList.remove('loading');
-  }
-});
+/* ════════════════════════════════════════════
+   AUTO-SEARCH: incolla link → cerca su UUFinds → riempie form
+   ════════════════════════════════════════════ */
 
-async function fetchProductInfo(productUrl) {
-  const proxies = [
-    `https://corsproxy.io/?${encodeURIComponent(productUrl)}`,
-    `https://api.allorigins.win/get?url=${encodeURIComponent(productUrl)}`
+let autoTimer = null;
+let lastSearchedUrl = '';
+
+/* Trigger on input + paste */
+$('f-link').addEventListener('input',  onLinkChange);
+$('f-link').addEventListener('paste',  () => setTimeout(onLinkChange, 80));
+
+function onLinkChange() {
+  clearTimeout(autoTimer);
+  const url = $('f-link').value.trim();
+  if (!url.startsWith('http')) { fbHide(); return; }
+  if (url === lastSearchedUrl) return; // same URL, skip
+  fbShow('searching', '🔍 Ricerca su UUFinds...');
+  autoTimer = setTimeout(() => runAutoFill(url), 700);
+}
+
+async function runAutoFill(url) {
+  lastSearchedUrl = url;
+
+  /* ── STEP 1: UUFinds ── */
+  fbShow('searching', '🔍 Ricerca su UUFinds...');
+  const uuf = await searchUUFinds(url);
+  if (uuf && (uuf.title || uuf.photos.length)) {
+    applyProductData(uuf);
+    const n = uuf.photos.length;
+    fbShow('ok', n
+      ? `✓ Trovato su UUFinds — ${n} foto QC caricate`
+      : '✓ Nome trovato su UUFinds');
+    return;
+  }
+
+  /* ── STEP 2: pagina prodotto diretta ── */
+  fbShow('searching', '🔍 Lettura pagina prodotto...');
+  const pg = await scrapeProductPage(url);
+  if (pg && (pg.title || pg.image)) {
+    applyProductData({ title: pg.title, photos: pg.image ? [pg.image] : [], weight: 0, remote: true });
+    fbShow('warn', '⚠ Info parziali trovate — controlla e completa');
+    return;
+  }
+
+  /* ── STEP 3: niente trovato ── */
+  fbShow('manual', '✏ Prodotto non trovato — compila manualmente');
+}
+
+/* ── Fetch bar helpers ── */
+function fbShow(state, text) {
+  const bar = $('fetch-bar');
+  bar.className = `fetch-bar ${state}`;
+  $('fb-text').textContent = text;
+  const icons = { searching: '⟳', ok: '✓', warn: '⚠', manual: '✏' };
+  const icon = $('fb-icon');
+  icon.textContent = icons[state] || '';
+  icon.className = 'fb-icon' + (state === 'searching' ? ' spin' : '');
+}
+function fbHide() {
+  $('fetch-bar').className = 'fetch-bar hidden';
+  lastSearchedUrl = '';
+}
+
+/* ────────────────────────────────────────────
+   SEARCH ON UUFINDS
+   Tries multiple URL formats + CORS proxies.
+   Extracts: title, photos (QC), weight.
+   ──────────────────────────────────────────── */
+async function searchUUFinds(productUrl) {
+  /* Try several UUFinds search URL patterns */
+  const candidates = [
+    `https://www.uufinds.com/?s=${encodeURIComponent(productUrl)}`,
+    `https://www.uufinds.com/s/?q=${encodeURIComponent(productUrl)}`,
+    `https://www.uufinds.com/search?q=${encodeURIComponent(productUrl)}`
   ];
 
-  for (const proxy of proxies) {
-    try {
-      const res = await fetch(proxy, { signal: AbortSignal.timeout(7000) });
-      let html = '';
-      if (proxy.includes('allorigins')) {
-        const j = await res.json();
-        html = j.contents || '';
-      } else {
-        html = await res.text();
-      }
-      if (!html) continue;
+  const proxies = [
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`
+  ];
 
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const og  = name => doc.querySelector(`meta[property="og:${name}"]`)?.content || '';
-      const meta = name => doc.querySelector(`meta[name="${name}"]`)?.content || '';
+  for (const searchUrl of candidates) {
+    for (const makeProxy of proxies) {
+      try {
+        const proxyUrl = makeProxy(searchUrl);
+        const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(9000) });
+        let html = '';
+        if (proxyUrl.includes('allorigins')) {
+          const j = await res.json(); html = j.contents || '';
+        } else {
+          html = await res.text();
+        }
+        if (!html || html.length < 500) continue;
 
-      const title = og('title') || meta('title') || doc.querySelector('title')?.textContent || '';
-      const image = og('image') || '';
-      const desc  = og('description') || meta('description') || '';
-
-      // clean up title (some sites add site name at end)
-      const cleanTitle = title.split(/[|\-–—]/)[0].trim().slice(0, 120);
-
-      if (cleanTitle || image) return { title: cleanTitle, image, desc };
-    } catch { /* try next proxy */ }
+        const result = parseUUFindsHtml(html);
+        if (result && (result.title || result.imageUrls.length)) {
+          /* Download QC images via proxy */
+          fbShow('searching', `⬇ Download ${result.imageUrls.length} foto QC...`);
+          const photos = await downloadImages(result.imageUrls.slice(0, 5));
+          return { title: result.title, photos, weight: result.weight };
+        }
+      } catch { /* try next */ }
+    }
   }
   return null;
 }
 
-async function fetchRemoteImage(imageUrl) {
+function parseUUFindsHtml(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+
+  /* Title: try OG first, then page heading, then <title> */
+  const ogTitle = doc.querySelector('meta[property="og:title"]')?.content || '';
+  const h1      = doc.querySelector('h1, h2, .post-title, .entry-title, .item-title')?.textContent?.trim() || '';
+  const rawTitle = ogTitle || h1 || doc.querySelector('title')?.textContent || '';
+  const title = rawTitle.split(/\s*[-|—–]\s*/)[0].trim().slice(0, 120);
+
+  /* Images: collect all <img> src, filter out tiny icons/logos */
+  const imageUrls = [];
+  const seen = new Set();
+  doc.querySelectorAll('img').forEach(img => {
+    const src = img.getAttribute('src') || img.getAttribute('data-src') ||
+                img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || '';
+    if (!src) return;
+    const abs = src.startsWith('//') ? 'https:' + src : src;
+    if (!abs.startsWith('http')) return;
+    if (seen.has(abs)) return;
+    // Skip avatars, icons, logos, tiny images
+    const lower = abs.toLowerCase();
+    if (lower.includes('avatar') || lower.includes('logo') || lower.includes('icon') ||
+        lower.includes('loading') || lower.includes('placeholder')) return;
+    const w = img.naturalWidth  || parseInt(img.getAttribute('width'))  || 0;
+    const h = img.naturalHeight || parseInt(img.getAttribute('height')) || 0;
+    if (w && h && (w < 80 || h < 80)) return; // skip tiny
+    seen.add(abs);
+    imageUrls.push(abs);
+  });
+
+  /* Weight: search visible text for patterns like "300g", "weight: 450g" */
+  const bodyText = doc.body?.textContent || '';
+  const wMatch =
+    bodyText.match(/重量[：:]\s*(\d+\.?\d*)\s*[gG克]/) ||
+    bodyText.match(/[Ww]eight[：:\s]+(\d+\.?\d*)\s*g/) ||
+    bodyText.match(/(\d+\.?\d*)\s*(?:gram|grams|g)\b/);
+  const weight = wMatch ? Math.round(parseFloat(wMatch[1])) : 0;
+
+  return { title, imageUrls, weight };
+}
+
+/* ────────────────────────────────────────────
+   FALLBACK: scrape product page directly
+   ──────────────────────────────────────────── */
+async function scrapeProductPage(productUrl) {
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(productUrl)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(productUrl)}`
+  ];
+  for (const proxy of proxies) {
+    try {
+      const res = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
+      let html = '';
+      if (proxy.includes('allorigins')) { const j = await res.json(); html = j.contents || ''; }
+      else html = await res.text();
+      if (!html || html.length < 200) continue;
+
+      const doc  = new DOMParser().parseFromString(html, 'text/html');
+      const og   = n => doc.querySelector(`meta[property="og:${n}"]`)?.content || '';
+      const meta = n => doc.querySelector(`meta[name="${n}"]`)?.content || '';
+
+      const rawTitle = og('title') || meta('title') || doc.querySelector('title')?.textContent || '';
+      const title = rawTitle.split(/\s*[-|—–]\s*/)[0].trim().slice(0, 120);
+      const image = og('image') || '';
+
+      if (title || image) return { title, image };
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+/* ────────────────────────────────────────────
+   DOWNLOAD + COMPRESS REMOTE IMAGES
+   ──────────────────────────────────────────── */
+async function downloadImages(urls) {
+  const result = [];
+  for (const url of urls) {
+    try {
+      const proxied = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+      const res  = await fetch(proxied, { signal: AbortSignal.timeout(7000) });
+      const blob = await res.blob();
+      if (!blob.type.startsWith('image/') || blob.size < 1000) continue;
+      const file = new File([blob], 'photo.jpg', { type: blob.type });
+      const b64  = await new Promise(r => compressImage(file, 400, 400, .7, r));
+      result.push({ name: 'qc.jpg', data: b64 });
+    } catch { /* skip */ }
+  }
+  return result;
+}
+
+/* ── Apply fetched data to form ── */
+function applyProductData({ title, photos, weight, remote }) {
+  if (title && !$('f-name').value)   $('f-name').value  = title;
+  if (weight && !$('f-weight').value) $('f-weight').value = weight;
+  if (photos && photos.length > 0 && pendingPhotos.length === 0) {
+    /* Remote = array of raw image URLs (not yet downloaded) */
+    if (remote) {
+      /* photos here is actually an array of URLs to download */
+      downloadImages(photos).then(downloaded => {
+        pendingPhotos.push(...downloaded);
+        renderDZPreviews();
+      });
+    } else {
+      pendingPhotos.push(...photos);
+      renderDZPreviews();
+    }
+  }
+}
+
+async function downloadSingleImage(imageUrl) {
   try {
     const proxied = `https://corsproxy.io/?${encodeURIComponent(imageUrl)}`;
-    const res = await fetch(proxied, { signal: AbortSignal.timeout(8000) });
+    const res  = await fetch(proxied, { signal: AbortSignal.timeout(8000) });
     const blob = await res.blob();
-    const file = new File([blob], 'product.jpg', { type: blob.type || 'image/jpeg' });
-    await new Promise(resolve => {
-      compressImage(file, 400, 400, .7, b64 => {
-        pendingPhotos.push({ name: 'product.jpg', data: b64 });
-        renderDZPreviews();
-        resolve();
-      });
-    });
-  } catch { /* silently fail */ }
+    if (!blob.type.startsWith('image/')) return;
+    const file = new File([blob], 'product.jpg', { type: blob.type });
+    await new Promise(r => { compressImage(file, 400, 400, .7, b64 => { pendingPhotos.push({ name: 'product.jpg', data: b64 }); renderDZPreviews(); r(); }); });
+  } catch { /* silent */ }
 }
 
 /* ── OPEN / CLOSE ADD MODAL ── */
@@ -583,7 +728,9 @@ function openAddModal(id = null) {
   $('f-link').value = ''; $('f-name').value = '';
   $('f-price').value = ''; $('f-weight').value = '';
   $('f-notes').value = '';
-  $('fetch-status').classList.add('hidden');
+  fbHide();
+  lastSearchedUrl = '';
+  clearTimeout(autoTimer);
 
   $('plat-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.v === 'CNFans'));
   $('status-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.v === 'In attesa'));
