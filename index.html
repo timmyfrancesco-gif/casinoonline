@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <!-- Gun.js real-time P2P database -->
   <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
 </head>
 <body>
 
@@ -28,6 +29,19 @@
      HOME SCREEN
 ════════════════════════════════════════════ -->
 <div id="screen-home" class="screen active">
+
+  <!-- account corner -->
+  <div class="account-corner" id="account-corner">
+    <button class="btn-acct" id="btn-account">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      Accedi
+    </button>
+    <div class="user-badge hidden" id="user-badge">
+      <span class="ub-avatar">⬡</span>
+      <span class="ub-name" id="ub-name">—</span>
+      <button class="ub-logout" id="btn-logout" title="Esci">✕</button>
+    </div>
+  </div>
 
   <header class="hero">
     <div class="hero-tag scroll-reveal">⬡ SISTEMA ATTIVO v4.0</div>
@@ -90,6 +104,12 @@
       <div class="join-loading hidden" id="join-loading">
         <span class="dot-loader"></span> Ricerca in corso...
       </div>
+    </div>
+
+    <!-- saved rooms (visible when logged in) -->
+    <div class="saved-rooms hidden" id="saved-rooms">
+      <p class="sr-label">// LE MIE STANZE</p>
+      <div class="sr-list" id="sr-list"></div>
     </div>
   </header>
 
@@ -331,6 +351,63 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     MODAL — ACCOUNT (LOGIN / REGISTER)
+════════════════════════════════════════════ -->
+<div class="overlay hidden" id="ov-auth">
+  <div class="modal modal-auth">
+    <button class="modal-x" id="auth-close">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <h2 class="modal-title">// ACCOUNT</h2>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="login">Accedi</button>
+      <button class="auth-tab" data-tab="register">Registrati</button>
+    </div>
+
+    <!-- login -->
+    <div class="auth-panel" id="ap-login">
+      <div class="fg full">
+        <label>Username</label>
+        <input type="text" id="au-user" placeholder="il_tuo_username" autocomplete="username"/>
+      </div>
+      <div class="fg full">
+        <label>Password</label>
+        <input type="password" id="au-pass" placeholder="••••••••" autocomplete="current-password"/>
+      </div>
+      <div class="auth-err hidden" id="au-err"></div>
+      <button class="btn-primary full-w" id="btn-login">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        Accedi
+      </button>
+    </div>
+
+    <!-- register -->
+    <div class="auth-panel hidden" id="ap-reg">
+      <div class="fg full">
+        <label>Username</label>
+        <input type="text" id="ru-user" placeholder="scegli_username" autocomplete="username"/>
+      </div>
+      <div class="fg full">
+        <label>Password</label>
+        <input type="password" id="ru-pass" placeholder="min. 8 caratteri" autocomplete="new-password"/>
+      </div>
+      <div class="fg full">
+        <label>Conferma password</label>
+        <input type="password" id="ru-pass2" placeholder="••••••••" autocomplete="new-password"/>
+      </div>
+      <div class="auth-err hidden" id="ru-err"></div>
+      <button class="btn-primary full-w" id="btn-register">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        Crea Account
+      </button>
+    </div>
+
+    <p class="auth-note">I dati sono cifrati localmente. Nessun server, nessun account cloud.</p>
   </div>
 </div>
 

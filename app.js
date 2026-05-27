@@ -13,6 +13,15 @@ const GUN_PEERS = [
 const gun = Gun({ peers: GUN_PEERS, localStorage: true });
 const DB_NS = 'ordervault_v3'; // namespace prefix
 
+/* Restore session if previously logged in */
+gun.user().recall({ sessionStorage: true }, ack => {
+  if (gun.user().is) {
+    const alias = gun.user().is.alias || gun.user().is.pub?.slice(0, 12) || 'Utente';
+    currentUser = { username: alias };
+    onUserLogin();
+  }
+});
+
 /* ─── STATE ─── */
 let currentRoom = null;
 let editId = null;
@@ -21,6 +30,7 @@ let selectedPlat = 'CNFans';
 let selectedStatus = 'In attesa';
 let orderListener = null;
 let ordersCache = {};  // id -> order object
+let currentUser = null; // { username } when logged in
 
 /* ─── QUERY ─── */
 const $ = id => document.getElementById(id);
@@ -307,6 +317,7 @@ async function createRoom() {
   const code = String(Math.floor(100000 + Math.random() * 900000));
   // Write room marker to Gun
   gun.get(DB_NS).get('rooms').get(code).put({ created: Date.now(), v: 1 });
+  saveRoomToAccount(code);
   // Show code modal
   $('big-code').textContent = code;
   openOverlay('ov-code');
@@ -363,6 +374,7 @@ function enterRoom(code) {
   $('join-box').classList.add('hidden');
   showScreen('room');
   startRoomListener();
+  saveRoomToAccount(code);
   renderOrders();
 }
 
@@ -1155,6 +1167,152 @@ function shake(el) {
 document.head.insertAdjacentHTML('beforeend', `<style>
   @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-9px)}40%{transform:translateX(9px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}
 </style>`);
+
+/* ════════════════════════════════════════════
+   ACCOUNT — GUN SEA AUTH
+════════════════════════════════════════════ */
+
+/* ── Open / close auth modal ── */
+$('btn-account').addEventListener('click', () => openOverlay('ov-auth'));
+$('auth-close').addEventListener('click', () => closeOverlay('ov-auth'));
+$('ov-auth').addEventListener('click', e => { if (e.target === $('ov-auth')) closeOverlay('ov-auth'); });
+
+/* ── Tabs ── */
+document.querySelectorAll('.auth-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const target = tab.dataset.tab;
+    $('ap-login').classList.toggle('hidden', target !== 'login');
+    $('ap-reg').classList.toggle('hidden', target !== 'register');
+    $('au-err').classList.add('hidden');
+    $('ru-err').classList.add('hidden');
+  });
+});
+
+/* ── LOGIN ── */
+$('btn-login').addEventListener('click', doLogin);
+$('au-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+function doLogin() {
+  const alias = $('au-user').value.trim();
+  const pass  = $('au-pass').value;
+  if (!alias || !pass) { showAuthErr('au-err', 'Inserisci username e password'); return; }
+
+  $('btn-login').disabled = true;
+  $('btn-login').textContent = '...';
+
+  gun.user().auth(alias, pass, ack => {
+    $('btn-login').disabled = false;
+    $('btn-login').innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg> Accedi`;
+    if (ack.err) { showAuthErr('au-err', ack.err.includes('Wrong') ? 'Credenziali errate' : ack.err); return; }
+    currentUser = { username: alias };
+    closeOverlay('ov-auth');
+    onUserLogin();
+    toast(`Benvenuto, ${alias}! 👾`, 'ok');
+  });
+}
+
+/* ── REGISTER ── */
+$('btn-register').addEventListener('click', doRegister);
+
+function doRegister() {
+  const alias = $('ru-user').value.trim();
+  const pass  = $('ru-pass').value;
+  const pass2 = $('ru-pass2').value;
+
+  if (!alias || alias.length < 3) { showAuthErr('ru-err', 'Username minimo 3 caratteri'); return; }
+  if (!pass || pass.length < 8)   { showAuthErr('ru-err', 'Password minimo 8 caratteri'); return; }
+  if (pass !== pass2)             { showAuthErr('ru-err', 'Le password non coincidono'); return; }
+
+  $('btn-register').disabled = true;
+  $('btn-register').textContent = '...';
+
+  gun.user().create(alias, pass, ack => {
+    if (ack.err) {
+      $('btn-register').disabled = false;
+      $('btn-register').innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Crea Account`;
+      showAuthErr('ru-err', ack.err.includes('already') ? 'Username già in uso' : ack.err);
+      return;
+    }
+    /* Auto-login after register */
+    gun.user().auth(alias, pass, ack2 => {
+      $('btn-register').disabled = false;
+      $('btn-register').innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Crea Account`;
+      if (ack2.err) { showAuthErr('ru-err', ack2.err); return; }
+      currentUser = { username: alias };
+      closeOverlay('ov-auth');
+      onUserLogin();
+      toast(`Account creato! Benvenuto, ${alias} 🚀`, 'ok');
+    });
+  });
+}
+
+/* ── LOGOUT ── */
+$('btn-logout').addEventListener('click', () => {
+  gun.user().leave();
+  currentUser = null;
+  onUserLogout();
+  toast('Disconnesso', 'ok');
+});
+
+/* ── Called after successful login ── */
+function onUserLogin() {
+  $('btn-account').classList.add('hidden');
+  $('user-badge').classList.remove('hidden');
+  $('ub-name').textContent = currentUser.username;
+  loadSavedRooms();
+  /* If currently in a room, save it */
+  if (currentRoom) saveRoomToAccount(currentRoom);
+}
+
+/* ── Called after logout ── */
+function onUserLogout() {
+  $('btn-account').classList.remove('hidden');
+  $('user-badge').classList.add('hidden');
+  $('ub-name').textContent = '—';
+  $('saved-rooms').classList.add('hidden');
+  $('sr-list').innerHTML = '';
+}
+
+/* ── Save room to user account ── */
+function saveRoomToAccount(code) {
+  if (!currentUser || !code) return;
+  gun.user().get('savedRooms').get(code).put({ code, ts: Date.now() });
+}
+
+/* ── Load saved rooms from user account ── */
+function loadSavedRooms() {
+  if (!currentUser) return;
+  const list = $('sr-list');
+  list.innerHTML = '';
+  const seen = new Set();
+
+  gun.user().get('savedRooms').map().on((data, id) => {
+    if (!data || !data.code || seen.has(data.code)) return;
+    seen.add(data.code);
+    renderSavedRoom(data.code);
+  });
+
+  $('saved-rooms').classList.remove('hidden');
+}
+
+function renderSavedRoom(code) {
+  const list = $('sr-list');
+  if (list.querySelector(`[data-code="${code}"]`)) return;
+  const pill = document.createElement('button');
+  pill.className = 'sr-pill';
+  pill.dataset.code = code;
+  pill.innerHTML = `<span class="sr-code">${code}</span>`;
+  pill.addEventListener('click', () => enterRoom(code));
+  list.appendChild(pill);
+}
+
+function showAuthErr(id, msg) {
+  const el = $(id);
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
 
 /* ── URL deep-link: ?room=XXXXXX ── */
 (function () {
