@@ -3,9 +3,5 @@
   "functions": {
     "api/lookup.js": { "runtime": "edge" },
     "api/image.js":  { "runtime": "edge" }
-  },
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/(.*)",     "dest": "/$1"     }
-  ]
+  }
 }
