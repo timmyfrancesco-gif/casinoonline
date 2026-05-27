@@ -1,7 +1,1 @@
-{
-  "version": 2,
-  "functions": {
-    "api/lookup.js": { "runtime": "edge" },
-    "api/image.js":  { "runtime": "edge" }
-  }
-}
+{}
