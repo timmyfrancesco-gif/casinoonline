@@ -1,362 +1,415 @@
 /**
- * OrderVault — /api/lookup  (v2)
- * Vercel Edge Function
+ * OrderVault — /api/lookup  (v3)
  * GET /api/lookup?url=PRODUCT_URL
  *
- * Strategy:
- *  1. Product page  → og:tags + JSON-LD + embedded SSR JSON (Nuxt/Next)
- *  2. UUFinds       → WordPress REST API → Next.js _next/data → direct scrape
- *  3. Return best result
+ * Flow:
+ *  1. Fetch product page → og:tags + SSR JSON + platform-specific API
+ *  2. Search UUFinds via: RSS feed → WP REST API → Next.js data → scrape
+ *  3. Merge: UUFinds photos + product page title/weight/price
  */
-
 export const config = { runtime: 'edge' };
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-const CORS_H = {
+const H = {
   'Content-Type': 'application/json',
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Cache-Control': 'public, s-maxage=120'
 };
 
-export default async function handler(request) {
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_H });
+export default async function handler(req) {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: H });
+  const { searchParams } = new URL(req.url);
+  const raw = searchParams.get('url') || '';
+  if (!raw.startsWith('http')) return resp({ error: 'invalid_url', source: null }, 400);
 
-  const { searchParams } = new URL(request.url);
-  const productUrl = searchParams.get('url');
-  if (!productUrl?.startsWith('http')) return json({ error: 'invalid_url', source: null }, 400);
-
-  /* Run product page + UUFinds in parallel for speed */
-  const [pageData, uufData] = await Promise.allSettled([
-    scrapeProductPage(productUrl),
-    searchUUFinds(productUrl)
+  /* Run both in parallel */
+  const [pageRes, uufRes] = await Promise.allSettled([
+    getProductPage(raw),
+    getUUFinds(raw)
   ]);
 
-  const page = pageData.status === 'fulfilled' ? pageData.value : null;
-  const uuf  = uufData.status  === 'fulfilled' ? uufData.value  : null;
+  const page = pageRes.status === 'fulfilled' ? pageRes.value : null;
+  const uuf  = uufRes.status  === 'fulfilled' ? uufRes.value  : null;
 
-  /* Prefer UUFinds (has QC photos), fall back to product page */
-  if (uuf && (uuf.title || uuf.images.length > 0)) {
-    return json({
-      source: 'uufinds',
-      title:  uuf.title  || page?.title  || '',
-      images: uuf.images.length ? uuf.images : (page?.images || []),
-      weight: uuf.weight || page?.weight || 0,
-      price:  uuf.price  || page?.price  || 0
+  /* UUFinds wins for QC photos; product page wins for title/weight/price */
+  if (uuf && (uuf.images.length > 0 || uuf.title)) {
+    return resp({
+      source:  'uufinds',
+      title:   uuf.title  || page?.title  || '',
+      images:  uuf.images.length ? uuf.images : (page?.images || []),
+      weight:  page?.weight || uuf.weight || 0,
+      price:   page?.price  || uuf.price  || 0,
     });
   }
+  if (page && (page.title || page.images.length)) {
+    return resp({ source: 'page', ...page });
+  }
+  return resp({ source: null, title: '', images: [], weight: 0, price: 0 });
+}
 
-  if (page && (page.title || page.images.length > 0)) {
-    return json({ source: 'page', ...page });
+/* ══════════════════════════════════════════════
+   PRODUCT PAGE (CNFans / OopBuy / Pandabuy …)
+   ══════════════════════════════════════════════ */
+async function getProductPage(url) {
+  /* 1. Try platform-specific API first (JSON, most reliable) */
+  const apiData = await tryPlatformAPI(url);
+  if (apiData?.title || apiData?.images?.length) return apiData;
+
+  /* 2. Fetch raw HTML */
+  const html = await get(url);
+  if (!html) return null;
+
+  /* 3. Parse */
+  const doc = parse(html);
+  const title   = pickTitle(doc, html);
+  const images  = pickImages(doc, html);
+  const weight  = pickWeight(doc.body?.textContent || '');
+  const price   = pickPrice(doc.body?.textContent || '');
+  return { title, images, weight, price };
+}
+
+/* Platform-specific API attempts */
+async function tryPlatformAPI(url) {
+  /* CNFans: extract id param → call their goods API */
+  if (url.includes('cnfans.com')) {
+    const id = new URL(url).searchParams.get('id');
+    if (id) {
+      const candidates = [
+        `https://cnfans.com/api/ware/waresinfo?ware_id=${id}`,
+        `https://cnfans.com/api/goods/detail?id=${id}`,
+        `https://cnfans.com/index.php?route=product/product/getInfo&goods_id=${id}`,
+      ];
+      for (const api of candidates) {
+        const data = await getJSON(api);
+        if (data) {
+          const p = data.data || data.result || data;
+          const title = p.goods_name || p.name || p.title || '';
+          const imgs = [];
+          if (p.goods_images) {
+            (Array.isArray(p.goods_images) ? p.goods_images : [p.goods_images])
+              .forEach(i => { if (typeof i === 'string') imgs.push(i); else if (i?.img_url) imgs.push(i.img_url); });
+          }
+          if (p.image) imgs.push(p.image);
+          if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || p.sell_price || 0 };
+        }
+      }
+    }
   }
 
-  return json({ source: null, title: '', images: [], weight: 0, price: 0 });
-}
-
-/* ════════════════════════════════════════════
-   1 — PRODUCT PAGE (CNFans, OopBuy, Pandabuy…)
-════════════════════════════════════════════ */
-async function scrapeProductPage(url) {
-  const html = await fetchHtml(url, 10000);
-  if (!html) return null;
-  return parseHtml(html);
-}
-
-/* ════════════════════════════════════════════
-   2 — UUFINDS  (try 3 methods)
-════════════════════════════════════════════ */
-async function searchUUFinds(productUrl) {
-
-  /* ── Method A: WordPress REST API ── */
-  try {
-    const q = encodeURIComponent(productUrl);
-    const wpUrl = `https://www.uufinds.com/wp-json/wp/v2/posts?search=${q}&per_page=5&_embed=true`;
-    const res = await fetchJSON(wpUrl, 7000);
-    if (Array.isArray(res) && res.length > 0) {
-      const post  = res[0];
-      const title = stripHtmlTags(post.title?.rendered || '');
-      const imgs  = [];
-      // Featured image
-      const feat  = post._embedded?.['wp:featuredmedia']?.[0];
-      if (feat?.source_url) imgs.push(feat.source_url);
-      // Images from media gallery in _embedded
-      const gallery = post._embedded?.['wp:attachment'] || [];
-      gallery.flat().forEach(m => { if (m?.source_url) imgs.push(m.source_url); });
-      // Images from content HTML
-      if (post.content?.rendered) {
-        const contentImgs = extractImagesFromHtml(post.content.rendered);
-        imgs.push(...contentImgs);
+  /* OopBuy: /product/detail/ID */
+  if (url.includes('oopbuy.com')) {
+    const m = url.match(/\/detail\/([^/?#]+)/);
+    if (m) {
+      const id = m[1];
+      const data = await getJSON(`https://www.oopbuy.com/api/product/detail?id=${id}`);
+      if (data) {
+        const p = data.data || data;
+        const title = p.name || p.product_name || '';
+        const imgs = (p.images || p.gallery || []).map(i => typeof i === 'string' ? i : i.url || '').filter(Boolean);
+        if (title || imgs.length) return { title, images: imgs.slice(0, 6), weight: p.weight || 0, price: p.price || 0 };
       }
-      if (title || imgs.length) return { title, images: [...new Set(imgs)].slice(0, 6), weight: 0, price: 0 };
     }
-  } catch { /* try next */ }
+  }
 
-  /* ── Method B: Next.js _next/data endpoint ── */
+  return null;
+}
+
+/* ══════════════════════════════════════════════
+   UUFINDS — 4 METHODS
+   ══════════════════════════════════════════════ */
+async function getUUFinds(productUrl) {
+  const q = encodeURIComponent(productUrl);
+
+  /* ── METHOD 1: RSS feed (always SSR on WordPress) ── */
   try {
-    const mainHtml = await fetchHtml('https://www.uufinds.com', 6000);
-    if (mainHtml) {
-      const buildIdMatch = mainHtml.match(/"buildId"\s*:\s*"([^"]+)"/);
-      if (buildIdMatch) {
-        const buildId = buildIdMatch[1];
-        const q = encodeURIComponent(productUrl);
-        /* Try common Next.js search page paths */
-        const paths = ['s', 'search', 'find'];
-        for (const path of paths) {
-          const dataUrl = `https://www.uufinds.com/_next/data/${buildId}/${path}.json?q=${q}`;
-          const data = await fetchJSON(dataUrl, 6000);
+    const xml = await get(`https://www.uufinds.com/feed/?s=${q}&post_type=post`, 8000);
+    if (xml && xml.includes('<item>')) {
+      const result = parseRSS(xml);
+      if (result?.title || result?.images?.length) return result;
+    }
+  } catch {}
+
+  /* ── METHOD 2: WordPress REST API ── */
+  try {
+    const posts = await getJSON(
+      `https://www.uufinds.com/wp-json/wp/v2/posts?search=${q}&per_page=3&_embed=true&_fields=id,title,content,_embedded`,
+      8000
+    );
+    if (Array.isArray(posts) && posts.length > 0) {
+      const result = parseWPPosts(posts);
+      if (result?.title || result?.images?.length) return result;
+    }
+  } catch {}
+
+  /* ── METHOD 3: Next.js _next/data ── */
+  try {
+    const home = await get('https://www.uufinds.com/', 6000);
+    if (home) {
+      const bid = home.match(/"buildId"\s*:\s*"([^"]+)"/)?.[1];
+      if (bid) {
+        for (const path of ['s', 'search']) {
+          const data = await getJSON(
+            `https://www.uufinds.com/_next/data/${bid}/${path}.json?q=${q}`,
+            6000
+          );
           if (data) {
-            const extracted = parseNextData(data);
-            if (extracted?.title || extracted?.images?.length) return extracted;
+            const r = parseNextData(data);
+            if (r?.title || r?.images?.length) return r;
           }
         }
       }
     }
-  } catch { /* try next */ }
+  } catch {}
 
-  /* ── Method C: Direct scrape (works if SSR) ── */
-  try {
-    const q = encodeURIComponent(productUrl);
-    const urls = [
-      `https://www.uufinds.com/?s=${q}`,
-      `https://www.uufinds.com/s/?q=${q}`,
-      `https://www.uufinds.com/search?q=${q}`
-    ];
-    for (const u of urls) {
-      const html = await fetchHtml(u, 7000);
-      if (!html || html.length < 500) continue;
-      const data = parseHtml(html);
-      if (data.title || data.images.length) return data;
-    }
-  } catch { /* give up */ }
+  /* ── METHOD 4: Direct HTML scrape (works if SSR) ── */
+  for (const su of [
+    `https://www.uufinds.com/?s=${q}`,
+    `https://www.uufinds.com/s/?q=${q}`,
+  ]) {
+    try {
+      const html = await get(su, 7000);
+      if (!html || html.length < 1000) continue;
+      const doc = parse(html);
+      const title  = pickTitle(doc, html);
+      const images = pickImages(doc, html);
+      if (title || images.length) return { title, images, weight: 0, price: 0 };
+    } catch {}
+  }
 
   return null;
 }
 
-/* ════════════════════════════════════════════
-   HTML PARSER — multi-strategy
-════════════════════════════════════════════ */
-function parseHtml(html) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
+/* ══════════════════════════════════════════════
+   RSS PARSER
+   ══════════════════════════════════════════════ */
+function parseRSS(xml) {
+  const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+  if (!items.length) return null;
 
-  /* ── Title ── */
-  let title = '';
-  // 1. og:title
-  title = doc.querySelector('meta[property="og:title"]')?.content?.trim() || '';
-  // 2. JSON-LD Product
-  if (!title) {
-    const ld = findJsonLd(doc, ['Product', 'ItemPage']);
-    if (ld) title = ld.name || ld.headline || '';
-  }
-  // 3. Embedded SSR JSON (Nuxt/Next)
-  if (!title) {
-    const ssrData = extractSsrJson(html);
-    if (ssrData) title = extractTitle(ssrData);
-  }
-  // 4. Visible heading
-  if (!title) {
-    title = doc.querySelector('h1, h2, .product-name, .product-title, .item-name, .goods-name')?.textContent?.trim() || '';
-  }
-  // 5. Page <title>
-  if (!title) title = doc.querySelector('title')?.textContent || '';
-  title = title.split(/\s*[-|—–|_]\s*/)[0].trim().slice(0, 140);
+  const raw = items[0][1];
+  const cdata = s => s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').trim();
 
-  /* ── Images ── */
+  const title = cdata(raw.match(/<title>([\s\S]*?)<\/title>/)?.[1] || '');
+  const content = cdata(
+    raw.match(/<content:encoded>([\s\S]*?)<\/content:encoded>/)?.[1] ||
+    raw.match(/<description>([\s\S]*?)<\/description>/)?.[1] || ''
+  );
+
   const images = [];
-  const seen   = new Set();
+  const re = /(?:src|href)=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp|gif)[^"']*)/gi;
+  let m;
+  while ((m = re.exec(content)) !== null && images.length < 6) images.push(m[1]);
 
-  // og:image first
-  const ogImg = doc.querySelector('meta[property="og:image"]')?.content;
-  if (ogImg && ogImg.startsWith('http')) { seen.add(ogImg); images.push(ogImg); }
-
-  // JSON-LD images
-  const ld = findJsonLd(doc, ['Product', 'ImageGallery', 'ItemPage']);
-  if (ld) {
-    const ldImgs = Array.isArray(ld.image) ? ld.image : ld.image ? [ld.image] : [];
-    ldImgs.forEach(i => {
-      const url = typeof i === 'string' ? i : i?.url || i?.contentUrl || '';
-      if (url && !seen.has(url)) { seen.add(url); images.push(url); }
-    });
-  }
-
-  // SSR JSON images
-  const ssrData = extractSsrJson(html);
-  if (ssrData) extractImagesFromObject(ssrData, images, seen);
-
-  // DOM images (priority selectors)
-  const selectors = [
-    '.product-images img', '.swiper-slide img', '.gallery img',
-    '[class*="product"] img', '[class*="goods"] img', '[class*="item"] img',
-    'figure img', '.post-content img', '.entry-content img', 'article img', 'main img'
-  ];
-  for (const sel of selectors) {
-    try { doc.querySelectorAll(sel).forEach(img => collectImg(img, images, seen)); } catch {}
-    if (images.length >= 8) break;
-  }
-  if (images.length < 2) doc.querySelectorAll('img').forEach(img => collectImg(img, images, seen));
-
-  /* ── Weight ── */
-  const text = doc.body?.textContent || '';
-  const wm = text.match(/重量[：:]\s*(\d+\.?\d*)\s*[gG克]/) ||
-             text.match(/[Ww]eight[:\s]+(\d+\.?\d*)\s*g\b/) ||
-             text.match(/(\d{2,4})\s*g(?:ram)?s?\b/);
-  const weight = wm ? Math.round(parseFloat(wm[1])) : 0;
-
-  /* ── Price ── */
-  const pm = text.match(/[¥$€£]\s*([\d,]+\.?\d{0,2})/);
-  const price = pm ? parseFloat(pm[1].replace(/,/g, '')) : 0;
-
-  return { title, images: images.slice(0, 6), weight, price };
+  return { title, images, weight: 0, price: 0 };
 }
 
-/* ════════════════════════════════════════════
+/* ══════════════════════════════════════════════
+   WP REST API PARSER
+   ══════════════════════════════════════════════ */
+function parseWPPosts(posts) {
+  const p = posts[0];
+  const title = stripTags(p.title?.rendered || '');
+  const images = [];
+
+  /* Featured image */
+  const feat = p._embedded?.['wp:featuredmedia']?.[0];
+  if (feat?.source_url) images.push(feat.source_url);
+  /* Media gallery */
+  (p._embedded?.['wp:attachment'] || []).flat()
+    .forEach(a => { if (a?.source_url) images.push(a.source_url); });
+  /* Images in post content */
+  if (p.content?.rendered) {
+    const re = /src=["'](https?:\/\/[^"']+\.(?:jpg|jpeg|png|webp)[^"']*)/gi;
+    let m;
+    while ((m = re.exec(p.content.rendered)) !== null && images.length < 6) images.push(m[1]);
+  }
+
+  return { title, images: [...new Set(images)].slice(0, 6), weight: 0, price: 0 };
+}
+
+/* ══════════════════════════════════════════════
+   NEXT.JS DATA PARSER
+   ══════════════════════════════════════════════ */
+function parseNextData(data) {
+  const props = data?.pageProps || data?.props?.pageProps || data;
+  return {
+    title:  deepFind(props, ['name','title','productName','goodsName','headline']) || '',
+    images: deepImages(props),
+    weight: 0, price: 0
+  };
+}
+
+/* ══════════════════════════════════════════════
+   HTML PARSING HELPERS
+   ══════════════════════════════════════════════ */
+function parse(html) {
+  return new DOMParser().parseFromString(html, 'text/html');
+}
+
+function pickTitle(doc, html) {
+  /* og:title */
+  let t = doc.querySelector('meta[property="og:title"]')?.content?.trim() || '';
+  /* JSON-LD */
+  if (!t) {
+    const ld = findLD(doc, ['Product','ItemPage','Thing']);
+    t = ld?.name || ld?.headline || '';
+  }
+  /* SSR JSON */
+  if (!t) t = deepFind(extractSSR(html), ['name','title','productName','goodsName']) || '';
+  /* Heading */
+  if (!t) t = doc.querySelector('h1,.product-name,.goods-name,.item-name')?.textContent?.trim() || '';
+  /* Page title */
+  if (!t) t = doc.querySelector('title')?.textContent?.trim() || '';
+  return t.split(/\s*[-|—–|_]\s*/)[0].trim().slice(0, 140);
+}
+
+function pickImages(doc, html) {
+  const seen = new Set(), imgs = [];
+
+  const add = (src) => {
+    if (!src || seen.has(src)) return;
+    const abs = src.startsWith('//') ? 'https:' + src : src;
+    if (!abs.startsWith('http')) return;
+    const lo = abs.toLowerCase();
+    if (['avatar','logo','icon','placeholder','spinner','banner','.svg','star-'].some(k => lo.includes(k))) return;
+    seen.add(abs); imgs.push(abs);
+  };
+
+  /* og:image */
+  add(doc.querySelector('meta[property="og:image"]')?.content || '');
+
+  /* JSON-LD */
+  const ld = findLD(doc, ['Product','ImageGallery']);
+  if (ld) {
+    const raw = Array.isArray(ld.image) ? ld.image : [ld.image];
+    raw.forEach(i => add(typeof i === 'string' ? i : i?.url || i?.contentUrl || ''));
+  }
+
+  /* SSR JSON images */
+  deepImages_add(extractSSR(html), imgs, seen);
+
+  /* DOM */
+  const sels = ['.swiper-slide img','.product-images img','[class*="goods"] img','[class*="product"] img','figure img','.post-content img','article img','main img'];
+  for (const s of sels) {
+    try {
+      doc.querySelectorAll(s).forEach(el => {
+        const src = el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original') || '';
+        const w = parseInt(el.getAttribute('width') || '0');
+        const h = parseInt(el.getAttribute('height') || '0');
+        if ((w && w < 80) || (h && h < 80)) return;
+        add(src);
+      });
+    } catch {}
+    if (imgs.length >= 8) break;
+  }
+  if (imgs.length < 2) {
+    doc.querySelectorAll('img').forEach(el => add(el.getAttribute('src') || el.getAttribute('data-src') || ''));
+  }
+
+  return imgs.slice(0, 6);
+}
+
+function pickWeight(text) {
+  const m = text.match(/重量[：:]\s*(\d+\.?\d*)\s*[gG克]/) ||
+            text.match(/[Ww]eight[:\s]+(\d+\.?\d*)\s*g\b/) ||
+            text.match(/(\d{2,4})\s*g(?:ram)?s?\b/);
+  return m ? Math.round(parseFloat(m[1])) : 0;
+}
+function pickPrice(text) {
+  const m = text.match(/[¥$€£]\s*([\d,]+\.?\d{0,2})/);
+  return m ? parseFloat(m[1].replace(/,/g, '')) : 0;
+}
+
+/* ══════════════════════════════════════════════
    SSR JSON EXTRACTION
-   (finds window.__NUXT__ / __NEXT_DATA__ / initialData etc.)
-════════════════════════════════════════════ */
-function extractSsrJson(html) {
-  const patterns = [
-    // Next.js
+   ══════════════════════════════════════════════ */
+function extractSSR(html) {
+  const pats = [
     /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i,
-    // Nuxt 2
-    /window\.__NUXT__\s*=\s*(\{[\s\S]*?\})(?:\s*;|\s*<)/,
-    /window\.__NUXT__\s*=\s*([\s\S]*?);<\/script>/,
-    // Generic
-    /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\})(?:\s*;)/,
-    /window\.initialData\s*=\s*(\{[\s\S]*?\})(?:\s*;)/,
-    /window\.__APP_STATE__\s*=\s*(\{[\s\S]*?\})(?:\s*;)/
+    /window\.__NUXT__\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/,
+    /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\})\s*;/,
+    /window\.initialData\s*=\s*(\{[\s\S]*?\})\s*;/,
   ];
-  for (const pat of patterns) {
-    const m = html.match(pat);
-    if (m) {
-      try { return JSON.parse(m[1]); } catch {}
-    }
+  for (const p of pats) {
+    const m = html.match(p);
+    if (m) { try { return JSON.parse(m[1]); } catch {} }
   }
   return null;
 }
 
-function extractTitle(obj, depth = 0) {
-  if (depth > 6 || !obj || typeof obj !== 'object') return '';
-  for (const key of ['name', 'title', 'productName', 'goodsName', 'itemName', 'headline', 'subject']) {
-    if (typeof obj[key] === 'string' && obj[key].length > 2) return obj[key];
-  }
-  for (const val of Object.values(obj)) {
-    const t = extractTitle(val, depth + 1);
-    if (t) return t;
+function deepFind(obj, keys, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 8) return '';
+  for (const k of keys) if (typeof obj[k] === 'string' && obj[k].length > 2) return obj[k];
+  for (const v of Object.values(obj)) {
+    const r = deepFind(v, keys, depth + 1);
+    if (r) return r;
   }
   return '';
 }
 
-function extractImagesFromObject(obj, images, seen, depth = 0) {
-  if (depth > 8 || !obj || typeof obj !== 'object') return;
-  if (images.length >= 8) return;
-  for (const [key, val] of Object.entries(obj)) {
-    if (typeof val === 'string' && val.startsWith('http') &&
-        /\.(jpg|jpeg|png|webp|avif)/i.test(val) && !seen.has(val)) {
-      const low = val.toLowerCase();
-      if (!['logo', 'avatar', 'icon', 'spinner', 'placeholder'].some(k => low.includes(k))) {
-        seen.add(val); images.push(val);
+function deepImages(obj, depth = 0) {
+  const imgs = []; const seen = new Set();
+  deepImages_add(obj, imgs, seen, depth);
+  return imgs;
+}
+function deepImages_add(obj, imgs, seen, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 8 || imgs.length >= 8) return;
+  for (const [, v] of Object.entries(obj)) {
+    if (typeof v === 'string' && v.startsWith('http') && /\.(jpg|jpeg|png|webp)/i.test(v) && !seen.has(v)) {
+      const lo = v.toLowerCase();
+      if (!['logo','avatar','icon','spinner','placeholder'].some(k => lo.includes(k))) {
+        seen.add(v); imgs.push(v);
       }
-    } else if (typeof val === 'object') {
-      extractImagesFromObject(val, images, seen, depth + 1);
-    }
+    } else if (typeof v === 'object') deepImages_add(v, imgs, seen, depth + 1);
   }
 }
 
-function extractImagesFromHtml(html) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  const imgs = [];
-  const seen = new Set();
-  doc.querySelectorAll('img').forEach(img => collectImg(img, imgs, seen));
-  return imgs;
-}
-
-/* ════════════════════════════════════════════
-   JSON-LD PARSER
-════════════════════════════════════════════ */
-function findJsonLd(doc, types) {
-  const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
-  for (const s of scripts) {
+/* ══════════════════════════════════════════════
+   JSON-LD
+   ══════════════════════════════════════════════ */
+function findLD(doc, types) {
+  for (const s of doc.querySelectorAll('script[type="application/ld+json"]')) {
     try {
-      const data = JSON.parse(s.textContent);
-      const items = Array.isArray(data) ? data : [data, ...(data['@graph'] || [])];
-      for (const item of items) {
-        if (types.some(t => (item['@type'] || '').includes(t))) return item;
-      }
+      const d = JSON.parse(s.textContent);
+      const items = [d, ...(Array.isArray(d) ? d : []), ...(d['@graph'] || [])];
+      for (const i of items) if (types.some(t => String(i['@type']).includes(t))) return i;
     } catch {}
   }
   return null;
 }
 
-/* ════════════════════════════════════════════
-   NEXT.JS PAGE DATA PARSER
-════════════════════════════════════════════ */
-function parseNextData(data) {
-  if (!data) return null;
-  const props = data.pageProps || data.props?.pageProps || data;
-  const title = extractTitle(props);
-  const images = [];
-  const seen = new Set();
-  extractImagesFromObject(props, images, seen);
-  return { title, images, weight: 0, price: 0 };
-}
-
-/* ════════════════════════════════════════════
-   IMAGE COLLECTOR
-════════════════════════════════════════════ */
-function collectImg(img, images, seen) {
-  if (images.length >= 10) return;
-  const src = img.getAttribute('src') || img.getAttribute('data-src') ||
-              img.getAttribute('data-lazy-src') || img.getAttribute('data-original') ||
-              img.getAttribute('data-full') || img.getAttribute('data-zoom') || '';
-  if (!src) return;
-  const abs = src.startsWith('//') ? 'https:' + src : src;
-  if (!abs.startsWith('http') || seen.has(abs)) return;
-  const low = abs.toLowerCase();
-  if (['avatar', 'logo', 'icon', 'loading', 'placeholder', 'spinner', 'banner', '.svg', 'emoji', 'star-rating', 'rating'].some(k => low.includes(k))) return;
-  const w = parseInt(img.getAttribute('width') || '0');
-  const h = parseInt(img.getAttribute('height') || '0');
-  if ((w > 0 && w < 80) || (h > 0 && h < 80)) return;
-  seen.add(abs);
-  images.push(abs);
-}
-
-/* ════════════════════════════════════════════
+/* ══════════════════════════════════════════════
    FETCH HELPERS
-════════════════════════════════════════════ */
-async function fetchHtml(url, timeout = 9000) {
+   ══════════════════════════════════════════════ */
+async function get(url, ms = 9000) {
   try {
-    const res = await fetch(url, {
+    const r = await fetch(url, {
       headers: {
         'User-Agent': UA,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br'
+        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+        'Cache-Control': 'no-cache',
       },
-      signal: AbortSignal.timeout(timeout),
-      redirect: 'follow'
+      signal: AbortSignal.timeout(ms),
+      redirect: 'follow',
     });
-    if (!res.ok) return null;
-    return await res.text();
+    return r.ok ? await r.text() : null;
   } catch { return null; }
 }
 
-async function fetchJSON(url, timeout = 7000) {
+async function getJSON(url, ms = 7000) {
   try {
-    const res = await fetch(url, {
+    const r = await fetch(url, {
       headers: { 'User-Agent': UA, 'Accept': 'application/json, */*' },
-      signal: AbortSignal.timeout(timeout),
-      redirect: 'follow'
+      signal: AbortSignal.timeout(ms),
+      redirect: 'follow',
     });
-    if (!res.ok) return null;
-    const ct = res.headers.get('content-type') || '';
+    if (!r.ok) return null;
+    const ct = r.headers.get('content-type') || '';
     if (!ct.includes('json') && !ct.includes('javascript')) return null;
-    return await res.json();
+    return await r.json();
   } catch { return null; }
 }
 
-function stripHtmlTags(str) {
-  return str.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#[0-9]+;/g, '').trim();
-}
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: CORS_H });
-}
+const stripTags = s => s.replace(/<[^>]+>/g, '').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+const resp = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: H });
