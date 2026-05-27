@@ -541,30 +541,31 @@ async function runAutoFill(url) {
 
 /* ── Vercel server-side API call ── */
 async function tryServerAPI(url) {
-  // Only on real deployment (not file:// or localhost without vercel dev)
-  const isDeployed = location.protocol === 'https:' ||
-    (location.hostname !== '' && location.hostname !== '127.0.0.1' && !location.hostname.includes('localhost'));
-
-  if (!isDeployed) return false;
+  // Skip if running as a local file or on GitHub Pages (no /api/ endpoint)
+  if (location.protocol === 'file:') return false;
+  if (location.hostname.includes('github.io')) return false;
 
   try {
-    fbShow('searching', '🔍 Ricerca su UUFinds...');
+    fbShow('searching', '🔍 Ricerca prodotto + QC...');
     const res = await fetch(`/api/lookup?url=${encodeURIComponent(url)}`, {
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(20000)
     });
+
+    // 404 = not on Vercel, use CORS fallback
+    if (res.status === 404) return false;
     if (!res.ok) return false;
 
     const data = await res.json();
-    if (!data || data.error) return false;
+    if (!data || data.error === 'invalid_url') return false;
 
     if (!data.source) {
       fbShow('manual', '✏ Prodotto non trovato — compila manualmente');
-      return true; // API worked, just no result
+      return true;
     }
 
     /* Download images via /api/image proxy */
     let photos = [];
-    if (data.images && data.images.length > 0) {
+    if (data.images?.length > 0) {
       fbShow('searching', `⬇ Download ${data.images.length} foto...`);
       photos = await downloadViaAPI(data.images.slice(0, 5));
     }
@@ -576,14 +577,20 @@ async function tryServerAPI(url) {
       photos
     });
 
-    const src = data.source === 'uufinds' ? 'UUFinds' : 'pagina prodotto';
-    fbShow(photos.length ? 'ok' : 'warn',
+    const src = data.source === 'uufinds' ? 'UUFinds 🎉' : 'pagina prodotto';
+    fbShow(
+      photos.length ? 'ok' : 'warn',
       photos.length
         ? `✓ Trovato su ${src} — ${photos.length} foto caricate`
-        : `✓ Nome trovato su ${src} — aggiungi foto manualmente`
+        : data.title
+          ? `✓ Nome trovato — nessuna foto QC disponibile`
+          : '⚠ Niente trovato — compila manualmente'
     );
     return true;
-  } catch { return false; }
+  } catch (e) {
+    // Network error = not reachable, try CORS fallback
+    return false;
+  }
 }
 
 /* Download images through /api/image proxy (server-side, no CORS) */
