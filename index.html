@@ -1,288 +1,336 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>OrderVault — Gestione Ordini Futuristica</title>
-  <link rel="stylesheet" href="style.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+  <!-- Gun.js real-time P2P database -->
+  <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
 </head>
 <body>
 
-<!-- ─── CANVAS PARTICELLE ─── -->
-<canvas id="particles"></canvas>
+<!-- ─── CUSTOM CURSOR ─── -->
+<div class="cursor-dot" id="cursor-dot"></div>
+<div class="cursor-ring" id="cursor-ring"></div>
+<div class="cursor-trail" id="cursor-trail"></div>
 
-<!-- ─── SCAN LINE OVERLAY ─── -->
+<!-- ─── BACKGROUND CANVAS ─── -->
+<canvas id="star-canvas"></canvas>
+
+<!-- ─── AURORA OVERLAY ─── -->
+<div class="aurora"></div>
 <div class="scanlines"></div>
-<div class="vignette"></div>
 
 <!-- ════════════════════════════════════════════
-     SCHERMATA HOME
-     ════════════════════════════════════════════ -->
+     HOME SCREEN
+════════════════════════════════════════════ -->
 <div id="screen-home" class="screen active">
 
-  <!-- hero -->
   <header class="hero">
-    <div class="hero-badge">v3.0 NEURAL</div>
-    <div class="logo-wrap">
-      <svg class="logo-icon" viewBox="0 0 80 80" fill="none">
-        <polygon points="40,5 75,25 75,55 40,75 5,55 5,25" stroke="url(#g1)" stroke-width="2" fill="none"/>
-        <polygon points="40,18 62,30 62,50 40,62 18,50 18,30" stroke="url(#g2)" stroke-width="1.5" fill="rgba(0,255,200,.05)"/>
-        <circle cx="40" cy="40" r="10" fill="url(#g3)" opacity=".9"/>
-        <defs>
-          <linearGradient id="g1" x1="0" y1="0" x2="80" y2="80">
-            <stop offset="0%" stop-color="#00ffe7"/>
-            <stop offset="100%" stop-color="#bf00ff"/>
-          </linearGradient>
-          <linearGradient id="g2" x1="0" y1="0" x2="80" y2="80">
-            <stop offset="0%" stop-color="#00ffe7"/>
-            <stop offset="100%" stop-color="#bf00ff"/>
-          </linearGradient>
-          <radialGradient id="g3" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stop-color="#00ffe7"/>
-            <stop offset="100%" stop-color="#bf00ff"/>
-          </radialGradient>
-        </defs>
-      </svg>
-      <h1 class="logo-text">ORDER<span>VAULT</span></h1>
-    </div>
-    <p class="hero-sub">La piattaforma definitiva per tracciare i tuoi ordini da <span class="hl">CNFans</span>, <span class="hl">OopBuy</span> e oltre.</p>
+    <div class="hero-tag scroll-reveal">⬡ SISTEMA ATTIVO v4.0</div>
 
-    <div class="cta-row">
-      <button class="btn-primary pulse" id="btn-create">
-        <span class="btn-icon">⬡</span> Crea Stanza
+    <div class="logo-wrap scroll-reveal">
+      <div class="logo-hex">
+        <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="50,4 93,27 93,73 50,96 7,73 7,27" stroke="url(#hg)" stroke-width="1.5" fill="rgba(0,229,255,.04)"/>
+          <polygon points="50,18 80,35 80,65 50,82 20,65 20,35" stroke="url(#hg2)" stroke-width="1" fill="rgba(168,85,247,.04)"/>
+          <circle cx="50" cy="50" r="14" fill="url(#hg3)"/>
+          <circle cx="50" cy="50" r="7" fill="url(#hg4)" opacity=".9"/>
+          <defs>
+            <linearGradient id="hg" x1="0" y1="0" x2="100" y2="100"><stop offset="0%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#a855f7"/></linearGradient>
+            <linearGradient id="hg2" x1="100" y1="0" x2="0" y2="100"><stop offset="0%" stop-color="#a855f7"/><stop offset="100%" stop-color="#00e5ff"/></linearGradient>
+            <radialGradient id="hg3"><stop offset="0%" stop-color="#00e5ff" stop-opacity=".4"/><stop offset="100%" stop-color="transparent"/></radialGradient>
+            <radialGradient id="hg4"><stop offset="0%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#a855f7"/></radialGradient>
+          </defs>
+        </svg>
+      </div>
+      <div>
+        <h1 class="logo-text">ORDER<span>VAULT</span></h1>
+        <div class="logo-sub">QUANTUM TRACKING SYSTEM</div>
+      </div>
+    </div>
+
+    <p class="hero-desc scroll-reveal">
+      Gestisci i tuoi ordini da <span class="hl">CNFans</span>, <span class="hl">OopBuy</span>, <span class="hl">Pandabuy</span> e oltre.<br/>
+      Stanze condivise in <span class="hl">tempo reale</span> — nessun account richiesto.
+    </p>
+
+    <div class="cta-row scroll-reveal">
+      <button class="btn-primary pulse-btn" id="btn-create">
+        <span class="btn-glow"></span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polygon points="12,2 22,7 22,17 12,22 2,17 2,7" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+        Crea Stanza
       </button>
-      <button class="btn-outline" id="btn-join-open">
-        <span class="btn-icon">◈</span> Unisciti
+      <button class="btn-ghost" id="btn-join-open">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Unisciti
       </button>
+    </div>
+
+    <!-- join box -->
+    <div class="join-box hidden" id="join-box">
+      <p class="join-hint">// INSERISCI CODICE STANZA</p>
+      <div class="code-inputs">
+        <input class="ci" maxlength="1" inputmode="numeric" autocomplete="off"/>
+        <input class="ci" maxlength="1" inputmode="numeric" autocomplete="off"/>
+        <input class="ci" maxlength="1" inputmode="numeric" autocomplete="off"/>
+        <div class="ci-sep">—</div>
+        <input class="ci" maxlength="1" inputmode="numeric" autocomplete="off"/>
+        <input class="ci" maxlength="1" inputmode="numeric" autocomplete="off"/>
+        <input class="ci" maxlength="1" inputmode="numeric" autocomplete="off"/>
+      </div>
+      <button class="btn-primary" id="btn-join-go">
+        Connetti
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <p class="join-err hidden" id="join-err">⚠ Stanza non trovata o in caricamento</p>
+      <div class="join-loading hidden" id="join-loading">
+        <span class="dot-loader"></span> Ricerca in corso...
+      </div>
     </div>
   </header>
 
-  <!-- join form (inline) -->
-  <div class="join-box hidden" id="join-box">
-    <p class="join-label">Inserisci il codice a 6 cifre</p>
-    <div class="code-input-row">
-      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
-      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
-      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
-      <span class="code-sep">—</span>
-      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
-      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
-      <input class="code-input" maxlength="1" type="text" inputmode="numeric" />
-    </div>
-    <button class="btn-primary" id="btn-join-confirm">Connetti →</button>
-    <p class="join-error hidden" id="join-error">⚠ Stanza non trovata</p>
-  </div>
-
-  <!-- features scroll -->
-  <section class="features">
-    <div class="feat-card scroll-reveal">
-      <div class="feat-icon">🔗</div>
-      <h3>Link Diretto</h3>
-      <p>Incolla il link del prodotto da qualsiasi piattaforma di acquisto.</p>
-    </div>
-    <div class="feat-card scroll-reveal">
-      <div class="feat-icon">📦</div>
-      <h3>Peso & Prezzo</h3>
-      <p>Tieni traccia di peso stimato e costo per ogni articolo.</p>
-    </div>
-    <div class="feat-card scroll-reveal">
-      <div class="feat-icon">🖼️</div>
-      <h3>Galleria Foto</h3>
-      <p>Aggiungi immagini di riferimento direttamente agli ordini.</p>
-    </div>
-    <div class="feat-card scroll-reveal">
-      <div class="feat-icon">🔐</div>
-      <h3>Codice Stanza</h3>
-      <p>Condividi il codice a 6 cifre con chi vuoi per collaborare.</p>
+  <!-- features -->
+  <section class="features-section">
+    <div class="feat-grid">
+      <div class="feat-card scroll-reveal">
+        <div class="feat-icon-wrap"><span>🔗</span></div>
+        <h3>Link & Auto-Info</h3>
+        <p>Incolla il link del prodotto: il sistema cerca automaticamente nome e immagini.</p>
+      </div>
+      <div class="feat-card scroll-reveal" style="--delay:.1s">
+        <div class="feat-icon-wrap"><span>🔄</span></div>
+        <h3>Sync Real-Time</h3>
+        <p>Le stanze si aggiornano in tempo reale su tutti i dispositivi connessi.</p>
+      </div>
+      <div class="feat-card scroll-reveal" style="--delay:.2s">
+        <div class="feat-icon-wrap"><span>🔍</span></div>
+        <h3>QC Check</h3>
+        <p>Controlla le foto QC del prodotto direttamente su UUFinds con un click.</p>
+      </div>
+      <div class="feat-card scroll-reveal" style="--delay:.3s">
+        <div class="feat-icon-wrap"><span>🖼️</span></div>
+        <h3>Galleria Foto</h3>
+        <p>Aggiungi le tue foto prodotto con drag & drop direttamente negli ordini.</p>
+      </div>
     </div>
   </section>
 
   <!-- how it works -->
-  <section class="howto">
-    <h2 class="section-title scroll-reveal">Come funziona</h2>
-    <div class="steps">
-      <div class="step scroll-reveal">
+  <section class="steps-section">
+    <h2 class="section-heading scroll-reveal">// COME FUNZIONA</h2>
+    <div class="steps-row">
+      <div class="step-item scroll-reveal">
         <div class="step-num">01</div>
-        <div class="step-text">
-          <h4>Crea la stanza</h4>
-          <p>Genera un codice univoco a 6 cifre.</p>
-        </div>
+        <h4>Crea</h4>
+        <p>Genera un codice stanza univoco a 6 cifre</p>
       </div>
-      <div class="step-arrow scroll-reveal">→</div>
-      <div class="step scroll-reveal">
+      <div class="step-line scroll-reveal"></div>
+      <div class="step-item scroll-reveal" style="--delay:.15s">
         <div class="step-num">02</div>
-        <div class="step-text">
-          <h4>Aggiungi ordini</h4>
-          <p>Link, prezzo, peso e foto.</p>
-        </div>
+        <h4>Condividi</h4>
+        <p>Manda il codice a chi vuoi far entrare</p>
       </div>
-      <div class="step-arrow scroll-reveal">→</div>
-      <div class="step scroll-reveal">
+      <div class="step-line scroll-reveal"></div>
+      <div class="step-item scroll-reveal" style="--delay:.3s">
         <div class="step-num">03</div>
-        <div class="step-text">
-          <h4>Condividi</h4>
-          <p>Dai il codice agli amici per unirsi.</p>
-        </div>
+        <h4>Traccia</h4>
+        <p>Aggiungi ordini, vedi aggiornamenti in tempo reale</p>
       </div>
     </div>
   </section>
 
-</div><!-- /screen-home -->
+  <footer class="home-footer">
+    <p>// ORDERVAULT — ZERO SERVER · ZERO ACCOUNT · REAL-TIME</p>
+  </footer>
+
+</div><!-- /home -->
 
 
 <!-- ════════════════════════════════════════════
-     SCHERMATA STANZA
-     ════════════════════════════════════════════ -->
+     ROOM SCREEN
+════════════════════════════════════════════ -->
 <div id="screen-room" class="screen">
 
-  <!-- top bar -->
   <nav class="room-nav">
-    <button class="nav-back" id="btn-back">← Home</button>
-    <div class="room-code-display">
-      <span class="rcd-label">STANZA</span>
-      <span class="rcd-code" id="room-code-display">000000</span>
-      <button class="copy-btn" id="btn-copy" title="Copia codice">⎘</button>
+    <button class="nav-back" id="btn-back">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M19 12H5M11 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Home
+    </button>
+
+    <div class="room-code-pill">
+      <span class="rcp-label">STANZA</span>
+      <span class="rcp-code" id="rcp-code">000000</span>
+      <button class="rcp-copy" id="btn-copy" title="Copia">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="1.8"/></svg>
+      </button>
     </div>
-    <button class="btn-primary sm" id="btn-add-order">+ Ordine</button>
+
+    <div class="nav-right">
+      <div class="online-dot" title="Connesso"></div>
+      <button class="btn-primary sm" id="btn-add">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        Ordine
+      </button>
+    </div>
   </nav>
 
-  <!-- stats bar -->
-  <div class="stats-bar">
-    <div class="stat-item">
-      <span class="stat-val" id="stat-count">0</span>
-      <span class="stat-lbl">Ordini</span>
+  <div class="stats-row">
+    <div class="stat-card">
+      <span class="stat-v" id="sv-count">0</span>
+      <span class="stat-l">Ordini</span>
     </div>
-    <div class="stat-item">
-      <span class="stat-val" id="stat-price">€0</span>
-      <span class="stat-lbl">Totale</span>
+    <div class="stat-card">
+      <span class="stat-v" id="sv-price">€0</span>
+      <span class="stat-l">Totale</span>
     </div>
-    <div class="stat-item">
-      <span class="stat-val" id="stat-weight">0g</span>
-      <span class="stat-lbl">Peso stim.</span>
+    <div class="stat-card">
+      <span class="stat-v" id="sv-weight">0g</span>
+      <span class="stat-l">Peso tot.</span>
     </div>
-    <div class="stat-item">
-      <span class="stat-val" id="stat-status">🟢</span>
-      <span class="stat-lbl">Stato</span>
+    <div class="stat-card">
+      <span class="stat-v" id="sv-status">—</span>
+      <span class="stat-l">Stato</span>
     </div>
   </div>
 
-  <!-- orders grid -->
   <div class="orders-grid" id="orders-grid">
-    <div class="empty-state" id="empty-state">
-      <div class="empty-icon">⬡</div>
-      <p>Nessun ordine ancora.<br/>Clicca <strong>+ Ordine</strong> per iniziare.</p>
+    <div class="empty-msg" id="empty-msg">
+      <div class="empty-hex">⬡</div>
+      <p>Nessun ordine ancora.<br/>Premi <strong>+ Ordine</strong> per iniziare.</p>
     </div>
   </div>
 
-</div><!-- /screen-room -->
+</div><!-- /room -->
 
 
 <!-- ════════════════════════════════════════════
-     MODAL — AGGIUNGI ORDINE
-     ════════════════════════════════════════════ -->
-<div id="modal-overlay" class="modal-overlay hidden">
-  <div class="modal" id="modal-add">
-    <button class="modal-close" id="modal-close">✕</button>
-    <h2 class="modal-title">Nuovo Ordine</h2>
+     MODAL — AGGIUNGI / MODIFICA
+════════════════════════════════════════════ -->
+<div class="overlay hidden" id="ov-add">
+  <div class="modal">
+    <button class="modal-x" id="add-close">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <h2 class="modal-title" id="modal-title-text">// NUOVO ORDINE</h2>
 
-    <div class="form-grid">
-      <div class="form-group full">
-        <label>Nome prodotto *</label>
-        <input type="text" id="f-name" placeholder="es. Nike Air Max 90" />
+    <div class="fg full">
+      <label>Link prodotto</label>
+      <div class="input-row">
+        <input type="url" id="f-link" placeholder="https://cnfans.com/product/?id=..." />
+        <button class="fetch-btn" id="btn-fetch" title="Carica info automaticamente">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 11-9-9c2.52 0 4.85.99 6.57 2.59L21 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21 3v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
       </div>
-      <div class="form-group full">
-        <label>Link prodotto</label>
-        <div class="input-icon-wrap">
-          <span class="input-icon">🔗</span>
-          <input type="url" id="f-link" placeholder="https://..." />
-        </div>
-      </div>
-      <div class="form-group">
+      <div class="fetch-status hidden" id="fetch-status"></div>
+    </div>
+
+    <div class="fg full">
+      <label>Nome prodotto *</label>
+      <input type="text" id="f-name" placeholder="es. Nike Air Max 90 — Taglia 42"/>
+    </div>
+
+    <div class="form-2col">
+      <div class="fg">
         <label>Prezzo (€)</label>
-        <input type="number" id="f-price" placeholder="0.00" min="0" step="0.01" />
+        <input type="number" id="f-price" placeholder="0.00" min="0" step="0.01"/>
       </div>
-      <div class="form-group">
+      <div class="fg">
         <label>Peso stimato (g)</label>
-        <input type="number" id="f-weight" placeholder="0" min="0" />
-      </div>
-      <div class="form-group full">
-        <label>Piattaforma</label>
-        <div class="platform-select" id="platform-select">
-          <button class="plat-btn active" data-plat="CNFans">CNFans</button>
-          <button class="plat-btn" data-plat="OopBuy">OopBuy</button>
-          <button class="plat-btn" data-plat="Pandabuy">Pandabuy</button>
-          <button class="plat-btn" data-plat="Sugargoo">Sugargoo</button>
-          <button class="plat-btn" data-plat="Altro">Altro</button>
-        </div>
-      </div>
-      <div class="form-group full">
-        <label>Stato</label>
-        <div class="status-select" id="status-select">
-          <button class="status-btn active" data-status="In attesa">⏳ In attesa</button>
-          <button class="status-btn" data-status="Ordinato">📦 Ordinato</button>
-          <button class="status-btn" data-status="Spedito">🚀 Spedito</button>
-          <button class="status-btn" data-status="Arrivato">✅ Arrivato</button>
-        </div>
-      </div>
-      <div class="form-group full">
-        <label>Note</label>
-        <textarea id="f-notes" rows="2" placeholder="Taglia, colore, variante..."></textarea>
-      </div>
-      <div class="form-group full">
-        <label>Foto prodotto</label>
-        <div class="photo-drop" id="photo-drop">
-          <input type="file" id="f-photos" accept="image/*" multiple hidden />
-          <div class="drop-inner" id="drop-inner">
-            <span class="drop-icon">📸</span>
-            <p>Trascina le immagini qui oppure <u>clicca per scegliere</u></p>
-          </div>
-          <div class="photo-previews" id="photo-previews"></div>
-        </div>
+        <input type="number" id="f-weight" placeholder="0" min="0"/>
       </div>
     </div>
 
-    <div class="modal-actions">
-      <button class="btn-outline" id="modal-cancel">Annulla</button>
-      <button class="btn-primary" id="modal-save">Salva Ordine ⬡</button>
+    <div class="fg full">
+      <label>Piattaforma</label>
+      <div class="chip-row" id="plat-chips">
+        <button class="chip active" data-v="CNFans">CNFans</button>
+        <button class="chip" data-v="OopBuy">OopBuy</button>
+        <button class="chip" data-v="Pandabuy">Pandabuy</button>
+        <button class="chip" data-v="Sugargoo">Sugargoo</button>
+        <button class="chip" data-v="Altro">Altro</button>
+      </div>
+    </div>
+
+    <div class="fg full">
+      <label>Stato</label>
+      <div class="chip-row" id="status-chips">
+        <button class="chip chip-s active" data-v="In attesa">⏳ In attesa</button>
+        <button class="chip chip-s" data-v="Ordinato">📦 Ordinato</button>
+        <button class="chip chip-s" data-v="Spedito">🚀 Spedito</button>
+        <button class="chip chip-s" data-v="Arrivato">✅ Arrivato</button>
+      </div>
+    </div>
+
+    <div class="fg full">
+      <label>Note (taglia, colore, variante...)</label>
+      <textarea id="f-notes" rows="2" placeholder="es. Taglia EU 42, colorway Rosso/Bianco"></textarea>
+    </div>
+
+    <div class="fg full">
+      <label>Foto prodotto</label>
+      <div class="drop-zone" id="drop-zone">
+        <input type="file" id="f-files" accept="image/*" multiple hidden/>
+        <div class="dz-inner" id="dz-inner">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" opacity=".4"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15l-5-5L5 21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <p>Trascina foto o <u>clicca per scegliere</u></p>
+        </div>
+        <div class="dz-previews" id="dz-previews"></div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-ghost sm" id="add-cancel">Annulla</button>
+      <button class="btn-primary" id="add-save">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        Salva Ordine
+      </button>
     </div>
   </div>
-</div><!-- /modal -->
-
+</div>
 
 <!-- ════════════════════════════════════════════
      MODAL — DETTAGLIO ORDINE
-     ════════════════════════════════════════════ -->
-<div id="modal-detail-overlay" class="modal-overlay hidden">
-  <div class="modal modal-detail" id="modal-detail">
-    <button class="modal-close" id="detail-close">✕</button>
-    <div id="detail-content"></div>
+════════════════════════════════════════════ -->
+<div class="overlay hidden" id="ov-detail">
+  <div class="modal modal-lg">
+    <button class="modal-x" id="detail-close">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <div id="detail-body"></div>
   </div>
 </div>
 
-
 <!-- ════════════════════════════════════════════
-     TOAST NOTIFICHE
-     ════════════════════════════════════════════ -->
-<div id="toast-container"></div>
-
-
-<!-- ════════════════════════════════════════════
-     MODAL CODICE CREATO
-     ════════════════════════════════════════════ -->
-<div id="modal-code-overlay" class="modal-overlay hidden">
+     MODAL — NUOVO CODICE
+════════════════════════════════════════════ -->
+<div class="overlay hidden" id="ov-code">
   <div class="modal modal-code">
-    <h2 class="modal-title">🔐 Stanza Creata!</h2>
+    <h2 class="modal-title">// STANZA CREATA</h2>
     <p class="modal-sub">Condividi questo codice per far unire i tuoi amici</p>
-    <div class="big-code" id="big-code">000000</div>
-    <div class="code-bits" id="code-bits"></div>
-    <div class="modal-actions">
-      <button class="btn-outline" id="code-copy-btn">⎘ Copia</button>
-      <button class="btn-primary" id="code-enter-btn">Entra nella stanza →</button>
+    <div class="big-code-wrap">
+      <div class="big-code" id="big-code">000000</div>
+      <div class="code-scan"></div>
+    </div>
+    <p class="modal-sub" style="font-size:.75rem;opacity:.5;">I dati vengono sincronizzati in tempo reale su tutti i dispositivi.</p>
+    <div class="modal-footer" style="justify-content:center;gap:12px;margin-top:0">
+      <button class="btn-ghost" id="code-copy">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="1.8"/></svg>
+        Copia
+      </button>
+      <button class="btn-primary" id="code-enter">
+        Entra nella stanza
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
     </div>
   </div>
 </div>
+
+<!-- ─── TOAST ─── -->
+<div id="toasts"></div>
 
 <script src="app.js"></script>
 </body>

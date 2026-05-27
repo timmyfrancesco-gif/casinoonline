@@ -1,186 +1,182 @@
-/* ══════════════════════════════════════════════════════════
-   ORDERVAULT — APP LOGIC
-   ══════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════
+   ORDERVAULT — APP.JS
+   ══════════════════════════════════════════════════════════════ */
 
 'use strict';
 
-/* ─── CONSTANTS ─── */
-const STORAGE_KEY = 'ordervault_rooms';
+/* ─── GUN.JS REAL-TIME DB (P2P, zero server) ─── */
+const GUN_PEERS = [
+  'https://peer.wallie.io/gun',
+  'https://gun-us.glitch.me/gun',
+  'https://etogun.glitch.me/gun'
+];
+const gun = Gun({ peers: GUN_PEERS, localStorage: true });
+const DB_NS = 'ordervault_v3'; // namespace prefix
 
 /* ─── STATE ─── */
 let currentRoom = null;
-let editingOrderId = null;
-let pendingPhotos = []; // array of { name, dataURL }
-let selectedPlatform = 'CNFans';
+let editId = null;
+let pendingPhotos = [];
+let selectedPlat = 'CNFans';
 let selectedStatus = 'In attesa';
+let orderListener = null;
+let ordersCache = {};  // id -> order object
 
-/* ─── STORAGE HELPERS ─── */
-function loadRooms() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
-  catch { return {}; }
-}
-function saveRooms(rooms) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms));
-}
-function getRoom(code) {
-  const rooms = loadRooms();
-  return rooms[code] || null;
-}
-function setRoom(code, data) {
-  const rooms = loadRooms();
-  rooms[code] = data;
-  saveRooms(rooms);
-}
-function generateCode() {
-  let code;
-  const rooms = loadRooms();
-  do { code = Math.floor(100000 + Math.random() * 900000).toString(); }
-  while (rooms[code]);
-  return code;
-}
-
-/* ─── DOM REFS ─── */
+/* ─── QUERY ─── */
 const $ = id => document.getElementById(id);
-const screenHome = $('screen-home');
-const screenRoom = $('screen-room');
-const btnCreate = $('btn-create');
-const btnJoinOpen = $('btn-join-open');
-const joinBox = $('join-box');
-const joinError = $('join-error');
-const btnJoinConfirm = $('btn-join-confirm');
-const codeInputs = document.querySelectorAll('.code-input');
-const roomCodeDisplay = $('room-code-display');
-const btnBack = $('btn-back');
-const btnCopy = $('btn-copy');
-const btnAddOrder = $('btn-add-order');
-const ordersGrid = $('orders-grid');
-const emptyState = $('empty-state');
-
-// stats
-const statCount = $('stat-count');
-const statPrice = $('stat-price');
-const statWeight = $('stat-weight');
-const statStatus = $('stat-status');
-
-// modal add
-const modalOverlay = $('modal-overlay');
-const modalClose = $('modal-close');
-const modalCancel = $('modal-cancel');
-const modalSave = $('modal-save');
-const fName = $('f-name');
-const fLink = $('f-link');
-const fPrice = $('f-price');
-const fWeight = $('f-weight');
-const fNotes = $('f-notes');
-const fPhotos = $('f-photos');
-const photoDrop = $('photo-drop');
-const dropInner = $('drop-inner');
-const photoPreviews = $('photo-previews');
-const platformSelect = $('platform-select');
-const statusSelect = $('status-select');
-
-// modal detail
-const modalDetailOverlay = $('modal-detail-overlay');
-const detailClose = $('detail-close');
-const detailContent = $('detail-content');
-
-// modal code
-const modalCodeOverlay = $('modal-code-overlay');
-const bigCode = $('big-code');
-const codeBits = $('code-bits');
-const codeCopyBtn = $('code-copy-btn');
-const codeEnterBtn = $('code-enter-btn');
 
 /* ════════════════════════════════════════════
-   PARTICLES CANVAS
-   ════════════════════════════════════════════ */
-(function initParticles() {
-  const canvas = $('particles');
+   IMMERSIVE STAR FIELD
+════════════════════════════════════════════ */
+(function StarField() {
+  const canvas = $('star-canvas');
   const ctx = canvas.getContext('2d');
-  let W, H, particles = [], connections = [];
+  let W, H;
 
   function resize() {
-    W = canvas.width = window.innerWidth;
+    W = canvas.width  = window.innerWidth;
     H = canvas.height = window.innerHeight;
   }
   resize();
   window.addEventListener('resize', resize);
 
-  const count = Math.min(Math.floor(window.innerWidth / 14), 90);
+  /* ─ Stars ─ */
+  const STARS = 1200;
+  const stars = Array.from({ length: STARS }, () => createStar(true));
+  const shootingStars = [];
 
-  function rand(a, b) { return a + Math.random() * (b - a); }
-
-  for (let i = 0; i < count; i++) {
-    particles.push({
-      x: rand(0, W), y: rand(0, H),
-      vx: rand(-.3, .3), vy: rand(-.3, .3),
-      r: rand(1, 2.5),
-      color: Math.random() > .5 ? 'rgba(0,255,231,' : 'rgba(191,0,255,',
-      alpha: rand(.3, .8)
-    });
+  function createStar(rand) {
+    return {
+      x:  (Math.random() - .5) * 3000,
+      y:  (Math.random() - .5) * 3000,
+      z:  rand ? Math.random() * 1800 : 1800,
+      pz: 0,
+      hue: Math.random() < .15 ? (Math.random() < .5 ? 195 : 270) : 0,
+      size: Math.random() * 1.5 + .3
+    };
   }
 
-  let mouse = { x: -1000, y: -1000 };
-  window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+  let mx = 0, my = 0, tmx = 0, tmy = 0;
+  let mVel = 0, prevMx = 0, prevMy = 0;
+
+  window.addEventListener('mousemove', e => {
+    tmx = (e.clientX / W - .5) * 2;
+    tmy = (e.clientY / H - .5) * 2;
+  });
+
+  /* ─ Shooting stars ─ */
+  function spawnShooting() {
+    shootingStars.push({
+      x: Math.random() * W * 1.4 - W * .2,
+      y: Math.random() * H * .5,
+      vx: (Math.random() * 6 + 4) * (Math.random() < .5 ? 1 : -1),
+      vy: Math.random() * 3 + 1,
+      len: Math.random() * 80 + 60,
+      life: 1, hue: Math.random() < .5 ? 195 : 280
+    });
+    setTimeout(spawnShooting, 3000 + Math.random() * 6000);
+  }
+  setTimeout(spawnShooting, 2000);
+
+  /* ─ Nebula blobs ─ */
+  const nebulas = [
+    { x: W * .2, y: H * .3, r: 300, h: 195, a: .025 },
+    { x: W * .8, y: H * .7, r: 250, h: 270, a: .02 },
+    { x: W * .5, y: H * .9, r: 200, h: 150, a: .015 }
+  ];
+
+  let frame = 0;
 
   function draw() {
-    ctx.clearRect(0, 0, W, H);
+    frame++;
 
-    // connections
-    for (let i = 0; i < particles.length; i++) {
-      for (let j = i + 1; j < particles.length; j++) {
-        const dx = particles[i].x - particles[j].x;
-        const dy = particles[i].y - particles[j].y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 130) {
-          const alpha = (1 - dist / 130) * .12;
-          ctx.beginPath();
-          ctx.moveTo(particles[i].x, particles[i].y);
-          ctx.lineTo(particles[j].x, particles[j].y);
-          ctx.strokeStyle = `rgba(0,255,231,${alpha})`;
-          ctx.lineWidth = .8;
-          ctx.stroke();
-        }
-      }
-    }
+    /* smooth mouse */
+    const dx = tmx - mx; const dy = tmy - my;
+    mx += dx * .04; my += dy * .04;
+    const dmx = tmx - prevMx; const dmy = tmy - prevMy;
+    mVel = Math.sqrt(dmx*dmx + dmy*dmy) * 60;
+    prevMx = tmx; prevMy = tmy;
+    const speed = 2.5 + mVel * 18;
 
-    // mouse repel connections
-    for (const p of particles) {
-      const dx = p.x - mouse.x; const dy = p.y - mouse.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 100) {
-        const alpha = (1 - dist / 100) * .35;
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(mouse.x, mouse.y);
-        ctx.strokeStyle = `rgba(191,0,255,${alpha})`;
-        ctx.lineWidth = .8;
-        ctx.stroke();
-      }
-    }
+    /* clear */
+    ctx.fillStyle = 'rgba(0,0,8,1)';
+    ctx.fillRect(0, 0, W, H);
 
-    // dots
-    for (const p of particles) {
-      p.x += p.vx; p.y += p.vy;
-      if (p.x < 0 || p.x > W) p.vx *= -1;
-      if (p.y < 0 || p.y > H) p.vy *= -1;
-
-      // mouse repel
-      const dx = p.x - mouse.x; const dy = p.y - mouse.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 80) {
-        const force = (80 - dist) / 80 * .5;
-        p.vx += (dx / dist) * force;
-        p.vy += (dy / dist) * force;
-        const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-        if (speed > 2) { p.vx = (p.vx / speed) * 2; p.vy = (p.vy / speed) * 2; }
-      }
-
+    /* nebulas */
+    for (const n of nebulas) {
+      const grd = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r);
+      grd.addColorStop(0, `hsla(${n.h},100%,60%,${n.a})`);
+      grd.addColorStop(1, 'transparent');
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = p.color + p.alpha + ')';
-      ctx.shadowBlur = 6;
-      ctx.shadowColor = p.color + '.6)';
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+    }
+
+    const cx = W / 2 + mx * 80;
+    const cy = H / 2 + my * 80;
+
+    /* warp star trails */
+    for (const s of stars) {
+      s.pz = s.z;
+      s.z -= speed;
+      if (s.z <= 0) { Object.assign(s, createStar(false)); s.pz = s.z; }
+
+      const sx  = (s.x / s.z)  * W + cx;
+      const sy  = (s.y / s.z)  * H + cy;
+      const spx = (s.x / s.pz) * W + cx;
+      const spy = (s.y / s.pz) * H + cy;
+
+      if (sx < -50 || sx > W + 50 || sy < -50 || sy > H + 50) continue;
+
+      const alpha = 1 - s.z / 1800;
+      const sz    = Math.max(.3, (1 - s.z / 1800) * s.size * 2.5);
+
+      const color = s.hue === 0
+        ? `rgba(200,220,255,${alpha * .85})`
+        : `hsla(${s.hue},100%,80%,${alpha * .9})`;
+
+      const trailLen = Math.sqrt((sx-spx)**2 + (sy-spy)**2);
+      if (trailLen > 1.5 && alpha > .3) {
+        ctx.beginPath();
+        ctx.moveTo(spx, spy);
+        ctx.lineTo(sx, sy);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = sz * .8;
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.arc(sx, sy, sz, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        if (s.hue !== 0 && alpha > .5) {
+          ctx.shadowBlur = 4;
+          ctx.shadowColor = `hsl(${s.hue},100%,70%)`;
+        }
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    /* shooting stars */
+    for (let i = shootingStars.length - 1; i >= 0; i--) {
+      const ss = shootingStars[i];
+      ss.x += ss.vx; ss.y += ss.vy; ss.life -= .012;
+      if (ss.life <= 0) { shootingStars.splice(i, 1); continue; }
+      const grad = ctx.createLinearGradient(ss.x, ss.y, ss.x - ss.vx * ss.len, ss.y - ss.vy * ss.len);
+      grad.addColorStop(0, `hsla(${ss.hue},100%,90%,${ss.life})`);
+      grad.addColorStop(1, 'transparent');
+      ctx.beginPath();
+      ctx.moveTo(ss.x, ss.y);
+      ctx.lineTo(ss.x - ss.vx * ss.len, ss.y - ss.vy * ss.len);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      /* head glow */
+      ctx.beginPath();
+      ctx.arc(ss.x, ss.y, 2, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${ss.hue},100%,95%,${ss.life})`;
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = `hsl(${ss.hue},100%,70%)`;
       ctx.fill();
       ctx.shadowBlur = 0;
     }
@@ -191,464 +187,713 @@ const codeEnterBtn = $('code-enter-btn');
 })();
 
 /* ════════════════════════════════════════════
-   SCROLL REVEAL
-   ════════════════════════════════════════════ */
-(function initScrollReveal() {
-  const observer = new IntersectionObserver(entries => {
-    entries.forEach(e => {
-      if (e.isIntersecting) {
-        e.target.classList.add('visible');
-        observer.unobserve(e.target);
-      }
-    });
-  }, { threshold: .12 });
-  document.querySelectorAll('.scroll-reveal').forEach(el => observer.observe(el));
+   CUSTOM CURSOR
+════════════════════════════════════════════ */
+(function Cursor() {
+  const dot   = $('cursor-dot');
+  const ring  = $('cursor-ring');
+  const trail = $('cursor-trail');
+  let mx = -200, my = -200;
+  let rx = -200, ry = -200;
+  let vx = 0, vy = 0;
+  let tx = -200, ty = -200;
+
+  document.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+  document.addEventListener('mousedown', () => dot.classList.add('clicking'));
+  document.addEventListener('mouseup',   () => dot.classList.remove('clicking'));
+
+  /* hover detection */
+  const hoverSels = 'button, a, input, textarea, [data-action], .order-card, .feat-card';
+  document.addEventListener('mouseover', e => {
+    if (e.target.closest(hoverSels)) ring.classList.add('hover');
+  });
+  document.addEventListener('mouseout', e => {
+    if (e.target.closest(hoverSels)) ring.classList.remove('hover');
+  });
+
+  function tick() {
+    dot.style.left = mx + 'px';
+    dot.style.top  = my + 'px';
+
+    const dx = mx - rx; const dy = my - ry;
+    vx += dx * .18; vy += dy * .18;
+    vx *= .72; vy *= .72;
+    rx += vx; ry += vy;
+    ring.style.left = rx + 'px';
+    ring.style.top  = ry + 'px';
+
+    /* trail (lazier) */
+    tx += (mx - tx) * .06;
+    ty += (my - ty) * .06;
+    trail.style.left = tx + 'px';
+    trail.style.top  = ty + 'px';
+
+    requestAnimationFrame(tick);
+  }
+  tick();
 })();
 
 /* ════════════════════════════════════════════
-   NAVIGATE
-   ════════════════════════════════════════════ */
-function showHome() {
-  screenRoom.classList.remove('active');
-  screenHome.classList.add('active');
-  currentRoom = null;
-}
-function showRoom(code) {
-  currentRoom = code;
-  screenHome.classList.remove('active');
-  screenRoom.classList.add('active');
-  roomCodeDisplay.textContent = code;
-  renderOrders();
+   SCROLL REVEAL
+════════════════════════════════════════════ */
+(function ScrollReveal() {
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); obs.unobserve(e.target); } });
+  }, { threshold: .1 });
+  document.querySelectorAll('.scroll-reveal').forEach(el => obs.observe(el));
+})();
+
+/* ════════════════════════════════════════════
+   3D CARD TILT
+════════════════════════════════════════════ */
+function addTilt(card) {
+  card.addEventListener('mousemove', e => {
+    const r = card.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const y = (e.clientY - r.top)  / r.height;
+    card.style.setProperty('--rx', `${(y - .5) * 14}deg`);
+    card.style.setProperty('--ry', `${(.5 - x) * 14}deg`);
+    card.style.setProperty('--mx', `${x * 100}%`);
+    card.style.setProperty('--my', `${y * 100}%`);
+  });
+  card.addEventListener('mouseleave', () => {
+    card.style.setProperty('--rx', '0deg');
+    card.style.setProperty('--ry', '0deg');
+  });
 }
 
 /* ════════════════════════════════════════════
-   HOME ACTIONS
-   ════════════════════════════════════════════ */
-btnCreate.addEventListener('click', () => {
-  const code = generateCode();
-  setRoom(code, { orders: [] });
+   NAVIGATION
+════════════════════════════════════════════ */
+function showScreen(name) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $('screen-' + name).classList.add('active');
+}
 
-  // show code modal
-  bigCode.textContent = code;
-  codeBits.innerHTML = '';
-  for (let i = 0; i < 3; i++) {
-    const d = document.createElement('div');
-    d.className = 'code-bit';
-    codeBits.appendChild(d);
-  }
-  modalCodeOverlay.classList.remove('hidden');
-
-  codeCopyBtn.onclick = () => {
-    navigator.clipboard.writeText(code).then(() => toast('Codice copiato!', 'success'));
-  };
-  codeEnterBtn.onclick = () => {
-    modalCodeOverlay.classList.add('hidden');
-    showRoom(code);
-  };
+/* ════════════════════════════════════════════
+   HOME BUTTON LOGIC
+════════════════════════════════════════════ */
+$('btn-create').addEventListener('click', createRoom);
+$('btn-join-open').addEventListener('click', () => {
+  const jb = $('join-box');
+  jb.classList.toggle('hidden');
+  if (!jb.classList.contains('hidden')) document.querySelectorAll('.ci')[0].focus();
 });
 
-btnJoinOpen.addEventListener('click', () => {
-  joinBox.classList.toggle('hidden');
-  if (!joinBox.classList.contains('hidden')) {
-    codeInputs[0].focus();
-  }
-});
-
-// code input auto-advance
-codeInputs.forEach((inp, i) => {
+/* code input: auto-advance + paste */
+const ciInputs = document.querySelectorAll('.ci');
+ciInputs.forEach((inp, i) => {
   inp.addEventListener('input', e => {
-    const val = e.target.value.replace(/\D/g, '');
-    e.target.value = val.slice(-1);
-    if (val && i < codeInputs.length - 1) codeInputs[i + 1].focus();
-    joinError.classList.add('hidden');
+    const v = e.target.value.replace(/\D/g, '');
+    e.target.value = v.slice(-1);
+    $('join-err').classList.add('hidden');
+    if (v && i < ciInputs.length - 1) ciInputs[i + 1].focus();
   });
   inp.addEventListener('keydown', e => {
-    if (e.key === 'Backspace' && !inp.value && i > 0) codeInputs[i - 1].focus();
+    if (e.key === 'Backspace' && !inp.value && i > 0) ciInputs[i - 1].focus();
+    if (e.key === 'Enter') joinRoom();
   });
   inp.addEventListener('paste', e => {
     e.preventDefault();
-    const text = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
-    text.split('').forEach((ch, j) => {
-      if (codeInputs[j]) codeInputs[j].value = ch;
-    });
-    if (text.length === 6) btnJoinConfirm.focus();
+    const t = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+    t.split('').forEach((c, j) => { if (ciInputs[j]) ciInputs[j].value = c; });
+    if (t.length === 6) $('btn-join-go').focus();
   });
 });
+$('btn-join-go').addEventListener('click', joinRoom);
 
-btnJoinConfirm.addEventListener('click', joinRoom);
+/* ── CREATE ROOM ── */
+async function createRoom() {
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  // Write room marker to Gun
+  gun.get(DB_NS).get('rooms').get(code).put({ created: Date.now(), v: 1 });
+  // Show code modal
+  $('big-code').textContent = code;
+  openOverlay('ov-code');
+  $('code-copy').onclick = () => {
+    navigator.clipboard.writeText(code);
+    toast('Codice copiato!', 'ok');
+  };
+  $('code-enter').onclick = () => { closeOverlay('ov-code'); enterRoom(code); };
+}
+
+/* ── JOIN ROOM ── */
 function joinRoom() {
-  const code = Array.from(codeInputs).map(i => i.value).join('');
-  if (code.length < 6) { toast('Inserisci tutte e 6 le cifre', 'error'); return; }
-  const room = getRoom(code);
-  if (!room) {
-    joinError.classList.remove('hidden');
-    shakeEl(joinBox);
-    return;
-  }
-  joinError.classList.add('hidden');
-  showRoom(code);
-}
+  const code = Array.from(ciInputs).map(i => i.value).join('');
+  if (code.length < 6) { toast('Inserisci tutte e 6 le cifre', 'err'); return; }
 
-/* ════════════════════════════════════════════
-   ROOM ACTIONS
-   ════════════════════════════════════════════ */
-btnBack.addEventListener('click', () => {
-  showHome();
-  codeInputs.forEach(i => i.value = '');
-  joinBox.classList.add('hidden');
-});
-btnCopy.addEventListener('click', () => {
-  navigator.clipboard.writeText(currentRoom).then(() => toast('Codice copiato!', 'success'));
-});
-btnAddOrder.addEventListener('click', () => openAddModal());
+  $('join-err').classList.add('hidden');
+  $('join-loading').classList.remove('hidden');
+  $('btn-join-go').disabled = true;
 
-/* ════════════════════════════════════════════
-   ADD/EDIT MODAL
-   ════════════════════════════════════════════ */
-function openAddModal(orderId = null) {
-  editingOrderId = orderId;
-  pendingPhotos = [];
-  photoPreviews.innerHTML = '';
-  selectedPlatform = 'CNFans';
-  selectedStatus = 'In attesa';
-  fName.value = ''; fLink.value = ''; fPrice.value = ''; fWeight.value = ''; fNotes.value = '';
-
-  // reset platform / status btns
-  platformSelect.querySelectorAll('.plat-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.plat === 'CNFans');
-  });
-  statusSelect.querySelectorAll('.status-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.status === 'In attesa');
-  });
-
-  if (orderId) {
-    // editing
-    const room = getRoom(currentRoom);
-    const order = room.orders.find(o => o.id === orderId);
-    if (order) {
-      fName.value = order.name || '';
-      fLink.value = order.link || '';
-      fPrice.value = order.price || '';
-      fWeight.value = order.weight || '';
-      fNotes.value = order.notes || '';
-      selectedPlatform = order.platform || 'CNFans';
-      selectedStatus = order.status || 'In attesa';
-      platformSelect.querySelectorAll('.plat-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.plat === selectedPlatform);
-      });
-      statusSelect.querySelectorAll('.status-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.status === selectedStatus);
-      });
-      if (order.photos) {
-        pendingPhotos = order.photos.map(p => ({ ...p }));
-        renderPhotoPreviews();
-      }
+  // Gun: check if room key exists (timeout 4s)
+  let resolved = false;
+  const timer = setTimeout(() => {
+    if (!resolved) {
+      resolved = true;
+      $('join-loading').classList.add('hidden');
+      $('btn-join-go').disabled = false;
+      $('join-err').classList.remove('hidden');
+      shake($('join-box'));
     }
-    document.querySelector('#modal-add .modal-title').textContent = 'Modifica Ordine';
-  } else {
-    document.querySelector('#modal-add .modal-title').textContent = 'Nuovo Ordine';
-  }
+  }, 4000);
 
-  modalOverlay.classList.remove('hidden');
-  setTimeout(() => fName.focus(), 100);
+  gun.get(DB_NS).get('rooms').get(code).once(data => {
+    if (resolved) return;
+    resolved = true;
+    clearTimeout(timer);
+    $('join-loading').classList.add('hidden');
+    $('btn-join-go').disabled = false;
+
+    if (data && data.created) {
+      enterRoom(code);
+    } else {
+      $('join-err').classList.remove('hidden');
+      shake($('join-box'));
+    }
+  });
 }
 
-modalClose.addEventListener('click', closeAddModal);
-modalCancel.addEventListener('click', closeAddModal);
-modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) closeAddModal(); });
-function closeAddModal() { modalOverlay.classList.add('hidden'); }
+/* ── ENTER ROOM ── */
+function enterRoom(code) {
+  currentRoom = code;
+  ordersCache = {};
+  $('rcp-code').textContent = code;
+  ciInputs.forEach(i => i.value = '');
+  $('join-box').classList.add('hidden');
+  showScreen('room');
+  startRoomListener();
+  renderOrders();
+}
 
-// platform select
-platformSelect.querySelectorAll('.plat-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    platformSelect.querySelectorAll('.plat-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    selectedPlatform = btn.dataset.plat;
-  });
+$('btn-back').addEventListener('click', () => {
+  stopRoomListener();
+  currentRoom = null; ordersCache = {};
+  showScreen('home');
 });
 
-// status select
-statusSelect.querySelectorAll('.status-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    statusSelect.querySelectorAll('.status-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    selectedStatus = btn.dataset.status;
-  });
+$('btn-copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(currentRoom);
+  toast('Codice copiato!', 'ok');
 });
 
-// photo upload
-photoDrop.addEventListener('click', e => {
-  if (e.target.classList.contains('preview-remove')) return;
-  fPhotos.click();
-});
-fPhotos.addEventListener('change', e => handleFiles(e.target.files));
+/* ════════════════════════════════════════════
+   GUN ROOM LISTENER (real-time)
+════════════════════════════════════════════ */
+function startRoomListener() {
+  if (orderListener) stopRoomListener();
+  orderListener = gun
+    .get(DB_NS).get('orders').get(currentRoom)
+    .map()
+    .on((data, id) => {
+      if (!data || data._deleted) {
+        delete ordersCache[id];
+      } else {
+        ordersCache[id] = { ...data, _id: id };
+      }
+      renderOrders();
+    });
+}
 
-photoDrop.addEventListener('dragover', e => { e.preventDefault(); photoDrop.classList.add('drag-over'); });
-photoDrop.addEventListener('dragleave', () => photoDrop.classList.remove('drag-over'));
-photoDrop.addEventListener('drop', e => {
-  e.preventDefault(); photoDrop.classList.remove('drag-over');
+function stopRoomListener() {
+  if (orderListener) {
+    try { orderListener.off && orderListener.off(); } catch {}
+    orderListener = null;
+  }
+  ordersCache = {};
+}
+
+/* ════════════════════════════════════════════
+   ADD ORDER BUTTON
+════════════════════════════════════════════ */
+$('btn-add').addEventListener('click', () => openAddModal());
+$('add-close').addEventListener('click', closeAddModal);
+$('add-cancel').addEventListener('click', closeAddModal);
+$('ov-add').addEventListener('click', e => { if (e.target === $('ov-add')) closeAddModal(); });
+$('ov-detail').addEventListener('click', e => { if (e.target === $('ov-detail')) closeOverlay('ov-detail'); });
+$('ov-code').addEventListener('click', e => { if (e.target === $('ov-code')) closeOverlay('ov-code'); });
+$('detail-close').addEventListener('click', () => closeOverlay('ov-detail'));
+
+/* ── PLATFORM / STATUS CHIPS ── */
+$('plat-chips').addEventListener('click', e => {
+  const btn = e.target.closest('.chip');
+  if (!btn) return;
+  $('plat-chips').querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  selectedPlat = btn.dataset.v;
+});
+$('status-chips').addEventListener('click', e => {
+  const btn = e.target.closest('.chip');
+  if (!btn) return;
+  $('status-chips').querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  selectedStatus = btn.dataset.v;
+});
+
+/* ── PHOTO DROP ── */
+const dropZone = $('drop-zone');
+const dzInner  = $('dz-inner');
+const dzPrev   = $('dz-previews');
+
+dropZone.addEventListener('click', e => {
+  if (e.target.classList.contains('dz-rm')) return;
+  $('f-files').click();
+});
+$('f-files').addEventListener('change', e => handleFiles(e.target.files));
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
   handleFiles(e.dataTransfer.files);
 });
 
 function handleFiles(files) {
   Array.from(files).forEach(file => {
     if (!file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      pendingPhotos.push({ name: file.name, dataURL: e.target.result });
-      renderPhotoPreviews();
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function renderPhotoPreviews() {
-  photoPreviews.innerHTML = '';
-  pendingPhotos.forEach((p, i) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'preview-item';
-    wrap.innerHTML = `<img class="preview-img" src="${p.dataURL}" alt="${p.name}" />
-      <button class="preview-remove" data-idx="${i}">✕</button>`;
-    photoPreviews.appendChild(wrap);
-  });
-  photoPreviews.querySelectorAll('.preview-remove').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      pendingPhotos.splice(parseInt(btn.dataset.idx), 1);
-      renderPhotoPreviews();
+    if (pendingPhotos.length >= 5) { toast('Max 5 foto', 'err'); return; }
+    compressImage(file, 400, 400, .65, b64 => {
+      pendingPhotos.push({ name: file.name, data: b64 });
+      renderDZPreviews();
     });
   });
-  dropInner.style.display = pendingPhotos.length ? 'none' : '';
 }
 
-modalSave.addEventListener('click', saveOrder);
+function compressImage(file, mw, mh, q, cb) {
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    const scale = Math.min(1, mw / img.width, mh / img.height);
+    const c = document.createElement('canvas');
+    c.width  = Math.round(img.width  * scale);
+    c.height = Math.round(img.height * scale);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    cb(c.toDataURL('image/jpeg', q));
+  };
+  img.src = url;
+}
+
+function renderDZPreviews() {
+  dzPrev.innerHTML = '';
+  dzInner.style.display = pendingPhotos.length ? 'none' : '';
+  pendingPhotos.forEach((p, i) => {
+    const wrap = document.createElement('div'); wrap.className = 'dz-item';
+    wrap.innerHTML = `<img class="dz-img" src="${p.data}" alt=""/>
+      <button class="dz-rm" data-i="${i}">✕</button>`;
+    dzPrev.appendChild(wrap);
+  });
+  dzPrev.querySelectorAll('.dz-rm').forEach(b => {
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      pendingPhotos.splice(+b.dataset.i, 1);
+      renderDZPreviews();
+    });
+  });
+}
+
+/* ── AUTO-FETCH PRODUCT INFO ── */
+$('btn-fetch').addEventListener('click', async () => {
+  const url = $('f-link').value.trim();
+  if (!url) { toast('Inserisci prima il link', 'err'); return; }
+  const btn = $('btn-fetch');
+  const status = $('fetch-status');
+  btn.classList.add('loading');
+  status.classList.remove('hidden'); status.className = 'fetch-status';
+  status.textContent = '// ricerca info prodotto...';
+  try {
+    const info = await fetchProductInfo(url);
+    if (info) {
+      if (info.title && !$('f-name').value) $('f-name').value = info.title;
+      if (info.image && pendingPhotos.length === 0) {
+        // download and compress the remote image
+        status.textContent = '// download immagine...';
+        await fetchRemoteImage(info.image);
+      }
+      status.textContent = '✓ Info caricate con successo!';
+      toast('Info prodotto caricate!', 'ok');
+    } else {
+      throw new Error('nessun dato');
+    }
+  } catch {
+    status.classList.add('err');
+    status.textContent = '// impossibile caricare info — compila manualmente';
+  } finally {
+    btn.classList.remove('loading');
+  }
+});
+
+async function fetchProductInfo(productUrl) {
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(productUrl)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(productUrl)}`
+  ];
+
+  for (const proxy of proxies) {
+    try {
+      const res = await fetch(proxy, { signal: AbortSignal.timeout(7000) });
+      let html = '';
+      if (proxy.includes('allorigins')) {
+        const j = await res.json();
+        html = j.contents || '';
+      } else {
+        html = await res.text();
+      }
+      if (!html) continue;
+
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const og  = name => doc.querySelector(`meta[property="og:${name}"]`)?.content || '';
+      const meta = name => doc.querySelector(`meta[name="${name}"]`)?.content || '';
+
+      const title = og('title') || meta('title') || doc.querySelector('title')?.textContent || '';
+      const image = og('image') || '';
+      const desc  = og('description') || meta('description') || '';
+
+      // clean up title (some sites add site name at end)
+      const cleanTitle = title.split(/[|\-–—]/)[0].trim().slice(0, 120);
+
+      if (cleanTitle || image) return { title: cleanTitle, image, desc };
+    } catch { /* try next proxy */ }
+  }
+  return null;
+}
+
+async function fetchRemoteImage(imageUrl) {
+  try {
+    const proxied = `https://corsproxy.io/?${encodeURIComponent(imageUrl)}`;
+    const res = await fetch(proxied, { signal: AbortSignal.timeout(8000) });
+    const blob = await res.blob();
+    const file = new File([blob], 'product.jpg', { type: blob.type || 'image/jpeg' });
+    await new Promise(resolve => {
+      compressImage(file, 400, 400, .7, b64 => {
+        pendingPhotos.push({ name: 'product.jpg', data: b64 });
+        renderDZPreviews();
+        resolve();
+      });
+    });
+  } catch { /* silently fail */ }
+}
+
+/* ── OPEN / CLOSE ADD MODAL ── */
+function openAddModal(id = null) {
+  editId = id;
+  pendingPhotos = [];
+  renderDZPreviews();
+  selectedPlat = 'CNFans'; selectedStatus = 'In attesa';
+
+  $('f-link').value = ''; $('f-name').value = '';
+  $('f-price').value = ''; $('f-weight').value = '';
+  $('f-notes').value = '';
+  $('fetch-status').classList.add('hidden');
+
+  $('plat-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.v === 'CNFans'));
+  $('status-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.v === 'In attesa'));
+
+  if (id) {
+    $('modal-title-text').textContent = '// MODIFICA ORDINE';
+    const o = ordersCache[id];
+    if (o) {
+      $('f-link').value   = o.link    || '';
+      $('f-name').value   = o.name    || '';
+      $('f-price').value  = o.price   || '';
+      $('f-weight').value = o.weight  || '';
+      $('f-notes').value  = o.notes   || '';
+      selectedPlat   = o.platform || 'CNFans';
+      selectedStatus = o.status   || 'In attesa';
+      $('plat-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.v === selectedPlat));
+      $('status-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.v === selectedStatus));
+      // restore photos
+      if (o.photoCount) {
+        for (let i = 0; i < o.photoCount; i++) {
+          if (o['photo' + i]) pendingPhotos.push({ name: 'photo', data: o['photo' + i] });
+        }
+        renderDZPreviews();
+      }
+    }
+  } else {
+    $('modal-title-text').textContent = '// NUOVO ORDINE';
+  }
+  openOverlay('ov-add');
+  setTimeout(() => $('f-link').focus(), 120);
+}
+
+function closeAddModal() { closeOverlay('ov-add'); }
+
+/* ── SAVE ORDER ── */
+$('add-save').addEventListener('click', saveOrder);
 function saveOrder() {
-  const name = fName.value.trim();
-  if (!name) { toast('Inserisci il nome del prodotto', 'error'); shakeEl(fName); return; }
+  const name = $('f-name').value.trim();
+  if (!name) { toast('Nome prodotto richiesto', 'err'); shake($('f-name')); return; }
 
-  const room = getRoom(currentRoom);
-  if (!room) return;
+  const id = editId || ('o' + Date.now() + Math.random().toString(36).slice(2, 5));
 
+  // Build order object (Gun.js doesn't like nested arrays, so flatten photos)
   const order = {
-    id: editingOrderId || 'ord_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    _id: id,
     name,
-    link: fLink.value.trim(),
-    price: parseFloat(fPrice.value) || 0,
-    weight: parseInt(fWeight.value) || 0,
-    platform: selectedPlatform,
-    status: selectedStatus,
-    notes: fNotes.value.trim(),
-    photos: pendingPhotos,
-    createdAt: editingOrderId ? undefined : Date.now(),
-    updatedAt: Date.now()
+    link:      $('f-link').value.trim(),
+    price:     parseFloat($('f-price').value)  || 0,
+    weight:    parseInt($('f-weight').value)   || 0,
+    platform:  selectedPlat,
+    status:    selectedStatus,
+    notes:     $('f-notes').value.trim(),
+    photoCount: pendingPhotos.length,
+    ts: editId ? (ordersCache[editId]?.ts || Date.now()) : Date.now(),
+    updated: Date.now()
   };
 
-  if (editingOrderId) {
-    const idx = room.orders.findIndex(o => o.id === editingOrderId);
-    if (idx !== -1) {
-      order.createdAt = room.orders[idx].createdAt;
-      room.orders[idx] = order;
+  // Attach photos as individual keys (Gun.js compatible)
+  pendingPhotos.forEach((p, i) => { order['photo' + i] = p.data; });
+  // Clear old photos if editing and fewer photos now
+  if (editId && ordersCache[editId]) {
+    const old = ordersCache[editId];
+    for (let i = pendingPhotos.length; i < (old.photoCount || 0); i++) {
+      order['photo' + i] = null;
     }
-    toast('Ordine aggiornato ✓', 'success');
-  } else {
-    order.createdAt = Date.now();
-    room.orders.push(order);
-    toast('Ordine aggiunto ✓', 'success');
   }
 
-  setRoom(currentRoom, room);
+  // Save to Gun
+  gun.get(DB_NS).get('orders').get(currentRoom).get(id).put(order);
+
   closeAddModal();
+  toast(editId ? 'Ordine aggiornato ✓' : 'Ordine aggiunto ✓', 'ok');
+  editId = null;
+}
+
+/* ── DELETE ORDER ── */
+function deleteOrder(id) {
+  if (!confirm('Eliminare questo ordine?')) return;
+  gun.get(DB_NS).get('orders').get(currentRoom).get(id).put({ _deleted: true });
+  delete ordersCache[id];
   renderOrders();
+  toast('Ordine eliminato', 'err');
 }
 
 /* ════════════════════════════════════════════
    RENDER ORDERS
-   ════════════════════════════════════════════ */
+════════════════════════════════════════════ */
 function renderOrders() {
-  const room = getRoom(currentRoom);
-  if (!room) return;
-  const orders = room.orders || [];
+  const grid = $('orders-grid');
+  const orders = Object.values(ordersCache).filter(o => o && !o._deleted);
+  orders.sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
-  // stats
-  statCount.textContent = orders.length;
-  statPrice.textContent = '€' + orders.reduce((s, o) => s + (o.price || 0), 0).toFixed(2);
-  statWeight.textContent = orders.reduce((s, o) => s + (o.weight || 0), 0) + 'g';
+  // stats (animated)
+  animNum($('sv-count'), orders.length, '');
+  animNum($('sv-price'), orders.reduce((s, o) => s + (o.price || 0), 0), '€', true);
+  animNum($('sv-weight'), orders.reduce((s, o) => s + (o.weight || 0), 0), 'g');
   const allArrived = orders.length > 0 && orders.every(o => o.status === 'Arrivato');
   const anyShipped = orders.some(o => o.status === 'Spedito');
-  statStatus.textContent = allArrived ? '✅' : anyShipped ? '🚀' : orders.length > 0 ? '⏳' : '—';
+  $('sv-status').textContent = allArrived ? '✅' : anyShipped ? '🚀' : orders.length ? '⏳' : '—';
 
-  // clear grid except empty state
-  Array.from(ordersGrid.children).forEach(el => {
-    if (el.id !== 'empty-state') el.remove();
-  });
+  // clear old cards
+  Array.from(grid.children).forEach(el => { if (el.id !== 'empty-msg') el.remove(); });
+  $('empty-msg').style.display = orders.length ? 'none' : '';
 
-  emptyState.style.display = orders.length === 0 ? '' : 'none';
-
-  orders.forEach((order, idx) => {
-    const card = buildOrderCard(order, idx);
-    ordersGrid.appendChild(card);
+  orders.forEach((o, idx) => {
+    const card = buildCard(o, idx);
+    grid.appendChild(card);
+    addTilt(card);
   });
 }
 
-function statusClass(status) {
-  const map = { 'In attesa': 'attesa', 'Ordinato': 'ordinato', 'Spedito': 'spedito', 'Arrivato': 'arrivato' };
-  return 'status-' + (map[status] || 'attesa');
+function animNum(el, target, suffix, isMoney) {
+  const current = parseFloat(el.dataset.val || 0);
+  if (Math.abs(current - target) < .01) {
+    el.textContent = isMoney ? suffix + target.toFixed(2) : suffix ? target + suffix : target.toString();
+    return;
+  }
+  el.dataset.val = target;
+  const start = performance.now();
+  const from = current;
+  const dur = 500;
+  function step(now) {
+    const t = Math.min(1, (now - start) / dur);
+    const ease = 1 - Math.pow(1 - t, 3);
+    const val = from + (target - from) * ease;
+    el.textContent = isMoney ? suffix + val.toFixed(2) : suffix ? Math.round(val) + suffix : Math.round(val).toString();
+    if (t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
 }
 
-function buildOrderCard(order, idx) {
+function buildCard(o, idx) {
   const card = document.createElement('div');
   card.className = 'order-card';
-  card.style.animationDelay = (idx * 0.06) + 's';
+  card.style.animationDelay = (idx * .06) + 's';
+  card.dataset.id = o._id;
 
-  const imgHTML = order.photos && order.photos.length > 0
-    ? `<img class="card-img" src="${order.photos[0].dataURL}" alt="${order.name}" loading="lazy" />`
-    : `<div class="card-img-placeholder">📦</div>`;
+  const photos = [];
+  for (let i = 0; i < (o.photoCount || 0); i++) {
+    if (o['photo' + i]) photos.push(o['photo' + i]);
+  }
+
+  const thumb = photos.length
+    ? `<img class="card-thumb" src="${photos[0]}" alt="${esc(o.name)}" loading="lazy"/>`
+    : `<div class="card-thumb-placeholder">📦</div>`;
+
+  const badge = statusBadge(o.status);
 
   card.innerHTML = `
-    ${imgHTML}
+    ${thumb}
     <div class="card-body">
-      <div class="card-header">
-        <span class="card-name">${escHtml(order.name)}</span>
-        <span class="card-platform">${escHtml(order.platform)}</span>
+      <div class="card-row1">
+        <span class="card-name">${esc(o.name)}</span>
+        <span class="card-plat">${esc(o.platform)}</span>
       </div>
-      <div class="card-meta">
-        ${order.price ? `<span class="price">€${order.price.toFixed(2)}</span>` : ''}
-        ${order.weight ? `<span class="weight">⚖ ${order.weight}g</span>` : ''}
-        ${order.photos && order.photos.length > 1 ? `<span>🖼 ${order.photos.length} foto</span>` : ''}
+      <div class="card-row2">
+        ${o.price  ? `<span class="cprice">€${o.price.toFixed(2)}</span>` : ''}
+        ${o.weight ? `<span>⚖ ${o.weight}g</span>` : ''}
+        ${photos.length > 1 ? `<span>🖼 ${photos.length}</span>` : ''}
       </div>
-      <span class="card-status ${statusClass(order.status)}">${order.status}</span>
+      <span class="badge ${badge.cls}">${badge.lbl}</span>
       <div class="card-actions">
-        <button class="card-btn" data-action="detail" data-id="${order.id}">👁 Dettagli</button>
-        <button class="card-btn" data-action="edit" data-id="${order.id}">✏ Modifica</button>
-        <button class="card-btn danger" data-action="delete" data-id="${order.id}">🗑</button>
+        <button class="ca-btn" data-action="view">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8"/><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" stroke="currentColor" stroke-width="1.8"/></svg>
+          Dettagli
+        </button>
+        <button class="ca-btn" data-action="edit">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.8"/></svg>
+          Modifica
+        </button>
+        <button class="ca-btn del" data-action="del">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><polyline points="3,6 5,6 21,6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="currentColor" stroke-width="1.8"/><path d="M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="currentColor" stroke-width="1.8"/></svg>
+        </button>
       </div>
     </div>`;
 
   card.addEventListener('click', e => {
     const btn = e.target.closest('[data-action]');
-    if (!btn) { openDetail(order.id); return; }
+    if (!btn) { openDetail(o._id); return; }
     e.stopPropagation();
-    const { action, id } = btn.dataset;
-    if (action === 'detail') openDetail(id);
-    if (action === 'edit')   openAddModal(id);
-    if (action === 'delete') deleteOrder(id);
+    if (btn.dataset.action === 'view')  openDetail(o._id);
+    if (btn.dataset.action === 'edit')  openAddModal(o._id);
+    if (btn.dataset.action === 'del')   deleteOrder(o._id);
   });
 
   return card;
 }
 
-/* ─── DELETE ─── */
-function deleteOrder(id) {
-  if (!confirm('Eliminare questo ordine?')) return;
-  const room = getRoom(currentRoom);
-  room.orders = room.orders.filter(o => o.id !== id);
-  setRoom(currentRoom, room);
-  renderOrders();
-  toast('Ordine eliminato', 'error');
+/* ════════════════════════════════════════════
+   DETAIL MODAL
+════════════════════════════════════════════ */
+function openDetail(id) {
+  const o = ordersCache[id];
+  if (!o) return;
+
+  const photos = [];
+  for (let i = 0; i < (o.photoCount || 0); i++) {
+    if (o['photo' + i]) photos.push(o['photo' + i]);
+  }
+
+  const galleryHTML = photos.length
+    ? `<div class="det-gallery">${photos.map(p => `<img src="${p}" alt=""/>`).join('')}</div>`
+    : '';
+
+  const linkHTML = o.link
+    ? `<a href="${esc(o.link)}" target="_blank" rel="noopener noreferrer" class="det-link">
+         ${esc(o.link.length > 60 ? o.link.slice(0, 60) + '…' : o.link)}
+       </a>`
+    : '<span style="opacity:.4">—</span>';
+
+  const qcURL = o.link
+    ? `https://www.uufinds.com/?q=${encodeURIComponent(o.link)}`
+    : 'https://www.uufinds.com';
+
+  const badge = statusBadge(o.status);
+  const created = o.ts ? new Date(o.ts).toLocaleDateString('it-IT') : '—';
+
+  $('detail-body').innerHTML = `
+    ${galleryHTML}
+    <div class="det-title">${esc(o.name)}</div>
+    ${o.link ? `
+    <a href="${qcURL}" target="_blank" rel="noopener" class="qc-btn">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.8"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      Cerca QC su UUFinds
+    </a>` : ''}
+    <div class="det-grid">
+      <div class="det-item"><label>Piattaforma</label><span>${esc(o.platform)}</span></div>
+      <div class="det-item"><label>Stato</label><span class="badge ${badge.cls}">${badge.lbl}</span></div>
+      <div class="det-item"><label>Prezzo</label><span style="color:var(--yellow);font-weight:700">${o.price ? '€' + o.price.toFixed(2) : '—'}</span></div>
+      <div class="det-item"><label>Peso stimato</label><span>${o.weight ? o.weight + ' g' : '—'}</span></div>
+      <div class="det-item"><label>Aggiunto</label><span>${created}</span></div>
+      <div class="det-item"><label>Foto</label><span>${photos.length || '—'}</span></div>
+      <div class="det-item" style="grid-column:1/-1"><label>Link</label>${linkHTML}</div>
+    </div>
+    ${o.notes ? `<div class="det-notes">${esc(o.notes)}</div>` : ''}
+    <div class="modal-footer" style="margin-top:8px">
+      <button class="btn-ghost sm" onclick="closeOverlay('ov-detail')">Chiudi</button>
+      <button class="btn-primary sm" onclick="closeOverlay('ov-detail');openAddModal('${id}')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="1.8"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.8"/></svg>
+        Modifica
+      </button>
+    </div>`;
+
+  openOverlay('ov-detail');
 }
 
 /* ════════════════════════════════════════════
-   DETAIL MODAL
-   ════════════════════════════════════════════ */
-function openDetail(id) {
-  const room = getRoom(currentRoom);
-  const order = room.orders.find(o => o.id === id);
-  if (!order) return;
+   OVERLAY HELPERS
+════════════════════════════════════════════ */
+function openOverlay(id)  { $(id).classList.remove('hidden'); }
+function closeOverlay(id) { $(id).classList.add('hidden'); }
 
-  const galleryHTML = order.photos && order.photos.length > 0
-    ? `<div class="detail-gallery">${order.photos.map(p => `<img src="${p.dataURL}" alt="${p.name}" />`).join('')}</div>`
-    : '';
-
-  const linkHTML = order.link
-    ? `<a href="${escHtml(order.link)}" target="_blank" rel="noopener" class="detail-link">${escHtml(order.link.slice(0, 55))}…</a>`
-    : '<span style="color:var(--text-muted)">—</span>';
-
-  const notesHTML = order.notes
-    ? `<div class="detail-notes">${escHtml(order.notes)}</div>`
-    : '';
-
-  const created = order.createdAt ? new Date(order.createdAt).toLocaleDateString('it-IT') : '—';
-
-  detailContent.innerHTML = `
-    ${galleryHTML}
-    <div class="detail-title">${escHtml(order.name)}</div>
-    <div class="detail-grid">
-      <div class="detail-item"><label>Piattaforma</label><span>${escHtml(order.platform)}</span></div>
-      <div class="detail-item"><label>Stato</label><span class="card-status ${statusClass(order.status)}">${order.status}</span></div>
-      <div class="detail-item"><label>Prezzo</label><span style="color:var(--yellow);font-weight:700">${order.price ? '€' + order.price.toFixed(2) : '—'}</span></div>
-      <div class="detail-item"><label>Peso stimato</label><span>${order.weight ? order.weight + ' g' : '—'}</span></div>
-      <div class="detail-item"><label>Aggiunto il</label><span>${created}</span></div>
-      <div class="detail-item"><label>Foto</label><span>${order.photos ? order.photos.length : 0}</span></div>
-      <div class="detail-item full" style="grid-column:1/-1"><label>Link prodotto</label>${linkHTML}</div>
-    </div>
-    ${notesHTML}
-    <div class="modal-actions" style="margin-top:4px">
-      <button class="btn-outline" onclick="document.getElementById('modal-detail-overlay').classList.add('hidden')">Chiudi</button>
-      <button class="btn-primary" onclick="document.getElementById('modal-detail-overlay').classList.add('hidden');openAddModal('${order.id}')">✏ Modifica</button>
-    </div>`;
-
-  modalDetailOverlay.classList.remove('hidden');
+/* ════════════════════════════════════════════
+   STATUS BADGE
+════════════════════════════════════════════ */
+function statusBadge(s) {
+  const map = {
+    'In attesa': { cls: 'b-wait',    lbl: '⏳ In attesa' },
+    'Ordinato':  { cls: 'b-ordered', lbl: '📦 Ordinato' },
+    'Spedito':   { cls: 'b-shipped', lbl: '🚀 Spedito' },
+    'Arrivato':  { cls: 'b-arrived', lbl: '✅ Arrivato' }
+  };
+  return map[s] || map['In attesa'];
 }
-
-detailClose.addEventListener('click', () => modalDetailOverlay.classList.add('hidden'));
-modalDetailOverlay.addEventListener('click', e => {
-  if (e.target === modalDetailOverlay) modalDetailOverlay.classList.add('hidden');
-});
 
 /* ════════════════════════════════════════════
    TOAST
-   ════════════════════════════════════════════ */
-function toast(msg, type = 'success') {
-  const container = $('toast-container');
+════════════════════════════════════════════ */
+function toast(msg, type = 'ok') {
+  const c = $('toasts');
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `<span>${type === 'success' ? '✓' : '✕'}</span> ${msg}`;
-  container.appendChild(el);
+  const icon = type === 'ok' ? '✓' : '✕';
+  el.innerHTML = `<span>${icon}</span> ${msg}`;
+  c.appendChild(el);
   setTimeout(() => {
-    el.classList.add('hide');
-    el.addEventListener('animationend', () => el.remove());
-  }, 2800);
+    el.classList.add('die');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+  }, 2600);
 }
 
 /* ════════════════════════════════════════════
    UTILS
-   ════════════════════════════════════════════ */
-function escHtml(str) {
+════════════════════════════════════════════ */
+function esc(str) {
   if (!str) return '';
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function shakeEl(el) {
-  el.style.animation = 'none';
-  el.offsetHeight; // reflow
-  el.style.animation = 'shake .4s ease';
+function shake(el) {
+  el.style.animation = 'none'; void el.offsetHeight;
+  el.style.animation = 'shake .45s ease';
   setTimeout(() => el.style.animation = '', 500);
 }
 
-/* Add shake keyframe dynamically */
-(function() {
-  const style = document.createElement('style');
-  style.textContent = `@keyframes shake {
-    0%,100%{transform:translateX(0)}
-    20%{transform:translateX(-8px)}
-    40%{transform:translateX(8px)}
-    60%{transform:translateX(-6px)}
-    80%{transform:translateX(6px)}
-  }`;
-  document.head.appendChild(style);
-})();
+/* inject shake keyframe */
+document.head.insertAdjacentHTML('beforeend', `<style>
+  @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-9px)}40%{transform:translateX(9px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}
+</style>`);
 
-/* ════════════════════════════════════════════
-   CODE MODAL CLOSE
-   ════════════════════════════════════════════ */
-modalCodeOverlay.addEventListener('click', e => {
-  if (e.target === modalCodeOverlay) modalCodeOverlay.classList.add('hidden');
-});
-
-/* ─── INIT ─── */
-// Handle direct URL with code ?room=XXXXXX
-(function checkURLRoom() {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get('room');
-  if (code && getRoom(code)) showRoom(code);
+/* ── URL deep-link: ?room=XXXXXX ── */
+(function () {
+  const p = new URLSearchParams(window.location.search);
+  const r = p.get('room');
+  if (r && r.length === 6 && /^\d+$/.test(r)) {
+    // try to join directly
+    gun.get(DB_NS).get('rooms').get(r).once(data => {
+      if (data && data.created) enterRoom(r);
+    });
+  }
 })();
