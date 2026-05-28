@@ -41,6 +41,7 @@ const $ = id => document.getElementById(id);
 ════════════════════════════════════════════ */
 (function StarField() {
   const canvas = $('star-canvas');
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
   let W, H;
 
@@ -204,6 +205,7 @@ const $ = id => document.getElementById(id);
   const dot   = $('cursor-dot');
   const ring  = $('cursor-ring');
   const trail = $('cursor-trail');
+  if (!dot || !ring || !trail) return;
   let mx = -200, my = -200;
   let rx = -200, ry = -200;
   let vx = 0, vy = 0;
@@ -520,7 +522,7 @@ function onLinkChange() {
   const url = $('f-link').value.trim();
   if (!url.startsWith('http')) { fbHide(); return; }
   if (url === lastSearchedUrl) return; // same URL, skip
-  fbShow('searching', '🔍 Ricerca su UUFinds...');
+  fbShow('searching', 'Ricerca su UUFinds...');
   autoTimer = setTimeout(() => runAutoFill(url), 700);
 }
 
@@ -532,7 +534,7 @@ async function runAutoFill(url) {
   if (apiResult) return;                     // applyProductData + fbShow already called
 
   /* ── STEP 2: Fallback browser CORS proxy (locale/dev) ── */
-  fbShow('searching', '🔍 Ricerca su UUFinds...');
+  fbShow('searching', 'Ricerca su UUFinds...');
   const uuf = await searchUUFinds(url);
   if (uuf && (uuf.title || uuf.photos.length)) {
     applyProductData(uuf);
@@ -541,15 +543,15 @@ async function runAutoFill(url) {
     return;
   }
 
-  fbShow('searching', '🔍 Lettura pagina prodotto...');
+  fbShow('searching', 'Lettura pagina prodotto...');
   const pg = await scrapeProductPage(url);
   if (pg && (pg.title || pg.image)) {
     applyProductData({ title: pg.title, photos: pg.image ? [pg.image] : [], weight: 0, remote: true });
-    fbShow('warn', '⚠ Info parziali — controlla e completa');
+    fbShow('warn', 'Info parziali — controlla e completa');
     return;
   }
 
-  fbShow('manual', '✏ Prodotto non trovato — compila manualmente');
+  fbShow('manual', 'Prodotto non trovato — compila manualmente');
 }
 
 /* ── Vercel server-side API call ── */
@@ -559,7 +561,7 @@ async function tryServerAPI(url) {
   if (location.hostname.includes('github.io')) return false;
 
   try {
-    fbShow('searching', '🔍 Ricerca prodotto + QC...');
+    fbShow('searching', 'Ricerca prodotto + QC...');
     const res = await fetch(`/api/lookup?url=${encodeURIComponent(url)}`, {
       signal: AbortSignal.timeout(20000)
     });
@@ -572,14 +574,14 @@ async function tryServerAPI(url) {
     if (!data || data.error === 'invalid_url') return false;
 
     if (!data.source && (!data.sources || !data.sources.length)) {
-      fbShow('manual', '✏ Prodotto non trovato — compila manualmente');
+      fbShow('manual', 'Prodotto non trovato — compila manualmente');
       return true;
     }
 
     /* Download images via /api/image proxy (merge from all sources) */
     let photos = [];
     if (data.images?.length > 0) {
-      fbShow('searching', `⬇ Download ${data.images.length} foto da ${(data.sources || [data.source]).join(' + ')}...`);
+      fbShow('searching', `Download ${data.images.length} foto da ${(data.sources || [data.source]).join(' + ')}...`);
       photos = await downloadViaAPI(data.images.slice(0, 6));
     }
 
@@ -602,7 +604,7 @@ async function tryServerAPI(url) {
         ? `✓ ${srcLabel}${multiSrc} — ${photos.length} foto caricate`
         : data.title
           ? `✓ Nome trovato — nessuna foto QC disponibile`
-          : '⚠ Niente trovato — compila manualmente'
+          : 'Niente trovato — compila manualmente'
     );
     return true;
   } catch (e) {
@@ -635,7 +637,7 @@ function fbShow(state, text) {
   const bar = $('fetch-bar');
   bar.className = `fetch-bar ${state}`;
   $('fb-text').textContent = text;
-  const icons = { searching: '⟳', ok: '✓', warn: '⚠', manual: '✏' };
+  const icons = { searching: '↻', ok: '✓', warn: '!', manual: '✎' };
   const icon = $('fb-icon');
   icon.textContent = icons[state] || '';
   icon.className = 'fb-icon' + (state === 'searching' ? ' spin' : '');
@@ -681,7 +683,7 @@ async function searchUUFinds(productUrl) {
         const result = parseUUFindsHtml(html);
         if (result && (result.title || result.imageUrls.length)) {
           /* Download QC images via proxy */
-          fbShow('searching', `⬇ Download ${result.imageUrls.length} foto QC...`);
+          fbShow('searching', `Download ${result.imageUrls.length} foto QC...`);
           const photos = await downloadImages(result.imageUrls.slice(0, 5));
           return { title: result.title, photos, weight: result.weight };
         }
@@ -1054,7 +1056,7 @@ function renderOrders() {
   animNum($('sv-weight'), orders.reduce((s, o) => s + (o.weight || 0), 0), 'g');
   const allArrived = orders.length > 0 && orders.every(o => o.status === 'Arrivato');
   const anyShipped = orders.some(o => o.status === 'Spedito');
-  $('sv-status').textContent = allArrived ? '✅' : anyShipped ? '🚀' : orders.length ? '⏳' : '—';
+  $('sv-status').textContent = allArrived ? 'OK' : anyShipped ? 'In viaggio' : orders.length ? 'In corso' : '—';
 
   // clear old cards
   Array.from(grid.children).forEach(el => { if (el.id !== 'empty-msg') el.remove(); });
@@ -1100,11 +1102,10 @@ function buildCard(o, idx) {
 
   const thumb = photos.length
     ? `<img class="card-thumb" src="${photos[0]}" alt="${esc(o.name)}" loading="lazy"/>`
-    : `<div class="card-thumb-placeholder">📦</div>`;
+    : `<div class="card-thumb-placeholder"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"><rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2" stroke="currentColor" stroke-width="1.5"/></svg></div>`;
 
   const badge = statusBadge(o.status);
-  const catIcons = { Scarpe:'👟', Maglia:'👕', Felpa:'🧥', Pantaloni:'👖', Altro:'📦' };
-  const catBadge = o.category ? `<span class="card-cat">${catIcons[o.category]||'📦'} ${esc(o.category)}</span>` : '';
+  const catBadge = o.category ? `<span class="card-cat">${esc(o.category)}</span>` : '';
   const catMeta  = (o.size || o.color)
     ? `<span class="card-catmeta">${[o.size && esc(o.size), o.color && esc(o.color)].filter(Boolean).join(' · ')}</span>`
     : '';
@@ -1182,8 +1183,6 @@ function openDetail(id) {
 
   const oopUrl  = toOopBuyLink(o.link);
   const qcURL   = o.link ? `https://www.uufinds.com/?q=${encodeURIComponent(o.link)}` : null;
-  const catIcons2 = { Scarpe:'👟', Maglia:'👕', Felpa:'🧥', Pantaloni:'👖', Altro:'📦' };
-
   const badge = statusBadge(o.status);
   const created = o.ts ? new Date(o.ts).toLocaleDateString('it-IT') : '—';
 
@@ -1201,7 +1200,7 @@ function openDetail(id) {
       </a>` : ''}
     </div>
     <div class="det-grid">
-      ${o.category ? `<div class="det-item"><label>Categoria</label><span>${catIcons2[o.category]||'📦'} ${esc(o.category)}</span></div>` : ''}
+      ${o.category ? `<div class="det-item"><label>Categoria</label><span>${esc(o.category)}</span></div>` : ''}
       ${o.model ? `<div class="det-item"><label>Modello</label><span>${esc(o.model)}</span></div>` : ''}
       ${o.color ? `<div class="det-item"><label>Colore</label><span>${esc(o.color)}</span></div>` : ''}
       ${o.size  ? `<div class="det-item"><label>Taglia</label><span style="color:var(--cyan);font-weight:700">${esc(o.size)}</span></div>` : ''}
@@ -1236,10 +1235,10 @@ function closeOverlay(id) { $(id).classList.add('hidden'); }
 ════════════════════════════════════════════ */
 function statusBadge(s) {
   const map = {
-    'In attesa': { cls: 'b-wait',    lbl: '⏳ In attesa' },
-    'Ordinato':  { cls: 'b-ordered', lbl: '📦 Ordinato' },
-    'Spedito':   { cls: 'b-shipped', lbl: '🚀 Spedito' },
-    'Arrivato':  { cls: 'b-arrived', lbl: '✅ Arrivato' }
+    'In attesa': { cls: 'b-wait',    lbl: 'In attesa' },
+    'Ordinato':  { cls: 'b-ordered', lbl: 'Ordinato' },
+    'Spedito':   { cls: 'b-shipped', lbl: 'Spedito' },
+    'Arrivato':  { cls: 'b-arrived', lbl: 'Arrivato' }
   };
   return map[s] || map['In attesa'];
 }
@@ -1356,7 +1355,7 @@ function doRegister() {
       currentUser = { username: alias };
       closeOverlay('ov-auth');
       onUserLogin();
-      toast(`Account creato! Benvenuto, ${alias} 🚀`, 'ok');
+      toast(`Account creato! Benvenuto, ${alias} `, 'ok');
     });
   });
 }

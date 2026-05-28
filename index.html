@@ -3,27 +3,13 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>OrderVault — Gestione Ordini Futuristica</title>
+  <title>OrderVault — Gestione Ordini</title>
   <link rel="stylesheet" href="style.css"/>
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <!-- Gun.js real-time P2P database -->
   <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
 </head>
 <body>
-
-<!-- ─── CUSTOM CURSOR ─── -->
-<div class="cursor-dot" id="cursor-dot"></div>
-<div class="cursor-ring" id="cursor-ring"></div>
-<div class="cursor-trail" id="cursor-trail"></div>
-
-<!-- ─── BACKGROUND CANVAS ─── -->
-<canvas id="star-canvas"></canvas>
-
-<!-- ─── AURORA OVERLAY ─── -->
-<div class="aurora"></div>
-<div class="scanlines"></div>
 
 <!-- ════════════════════════════════════════════
      HOME SCREEN
@@ -33,13 +19,17 @@
   <!-- account corner -->
   <div class="account-corner" id="account-corner">
     <button class="btn-acct" id="btn-account">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       Accedi
     </button>
     <div class="user-badge hidden" id="user-badge">
-      <span class="ub-avatar">⬡</span>
-      <span class="ub-name" id="ub-name">—</span>
-      <button class="ub-logout" id="btn-logout" title="Esci">✕</button>
+      <div class="ub-avatar">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="white" stroke-width="2"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+      </div>
+      <span class="ub-name" id="ub-name"></span>
+      <button class="ub-logout" id="btn-logout" title="Esci">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+      </button>
     </div>
   </div>
 
@@ -47,30 +37,29 @@
 
     <!-- ── LEFT: content ── -->
     <div class="hero-content">
-      <div class="hero-tag">⬡ SISTEMA ATTIVO v4.0</div>
-      <h1 class="logo-text">ORDER<span>VAULT</span></h1>
-      <div class="logo-sub">QUANTUM TRACKING SYSTEM</div>
+      <div class="hero-tag">v4.0</div>
+      <h1 class="logo-text">Order<span>Vault</span></h1>
+      <div class="logo-sub">Gestione ordini proxy</div>
 
       <p class="hero-desc">
-        Gestisci i tuoi ordini da <span class="hl">CNFans</span>, <span class="hl">OopBuy</span>, <span class="hl">Pandabuy</span> e oltre.<br/>
+        Traccia i tuoi ordini da <span class="hl">CNFans</span>, <span class="hl">OopBuy</span>, <span class="hl">Pandabuy</span> e altri.<br/>
         Stanze condivise in <span class="hl">tempo reale</span> — nessun account richiesto.
       </p>
 
       <div class="cta-row">
-        <button class="btn-primary pulse-btn" id="btn-create">
-          <span class="btn-glow"></span>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polygon points="12,2 22,7 22,17 12,22 2,17 2,7" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
-          Crea Stanza
+        <button class="btn-primary" id="btn-create">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Crea stanza
         </button>
         <button class="btn-ghost" id="btn-join-open">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           Unisciti
         </button>
       </div>
 
       <!-- join box -->
       <div class="join-box hidden" id="join-box">
-        <p class="join-hint">// INSERISCI CODICE STANZA</p>
+        <p class="join-hint">Inserisci codice stanza</p>
         <div class="code-inputs">
           <input class="ci" maxlength="1" inputmode="numeric" autocomplete="off"/>
           <input class="ci" maxlength="1" inputmode="numeric" autocomplete="off"/>
@@ -84,7 +73,7 @@
           Connetti
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
-        <p class="join-err hidden" id="join-err">⚠ Stanza non trovata o in caricamento</p>
+        <p class="join-err hidden" id="join-err">Stanza non trovata o in caricamento</p>
         <div class="join-loading hidden" id="join-loading">
           <span class="dot-loader"></span> Ricerca in corso...
         </div>
@@ -92,7 +81,7 @@
 
       <!-- saved rooms (visible when logged in) -->
       <div class="saved-rooms hidden" id="saved-rooms">
-        <p class="sr-label">// LE MIE STANZE</p>
+        <p class="sr-label">Le mie stanze</p>
         <div class="sr-list" id="sr-list"></div>
       </div>
     </div><!-- /hero-content -->
@@ -246,22 +235,30 @@
   <section class="features-section">
     <div class="feat-grid">
       <div class="feat-card scroll-reveal">
-        <div class="feat-icon-wrap"><span>🔗</span></div>
+        <div class="feat-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
         <h3>Link & Auto-Info</h3>
         <p>Incolla il link del prodotto: il sistema cerca automaticamente nome e immagini.</p>
       </div>
       <div class="feat-card scroll-reveal" style="--delay:.1s">
-        <div class="feat-icon-wrap"><span>🔄</span></div>
+        <div class="feat-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polyline points="23,4 23,10 17,10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
         <h3>Sync Real-Time</h3>
         <p>Le stanze si aggiornano in tempo reale su tutti i dispositivi connessi.</p>
       </div>
       <div class="feat-card scroll-reveal" style="--delay:.2s">
-        <div class="feat-icon-wrap"><span>🔍</span></div>
+        <div class="feat-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
         <h3>QC Check</h3>
         <p>Controlla le foto QC del prodotto direttamente su UUFinds con un click.</p>
       </div>
       <div class="feat-card scroll-reveal" style="--delay:.3s">
-        <div class="feat-icon-wrap"><span>🖼️</span></div>
+        <div class="feat-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15l-5-5L5 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
         <h3>Galleria Foto</h3>
         <p>Aggiungi le tue foto prodotto con drag & drop direttamente negli ordini.</p>
       </div>
@@ -270,7 +267,7 @@
 
   <!-- how it works -->
   <section class="steps-section">
-    <h2 class="section-heading scroll-reveal">// COME FUNZIONA</h2>
+    <h2 class="section-heading scroll-reveal">Come funziona</h2>
     <div class="steps-row">
       <div class="step-item scroll-reveal">
         <div class="step-num">01</div>
@@ -293,7 +290,7 @@
   </section>
 
   <footer class="home-footer">
-    <p>// ORDERVAULT — ZERO SERVER · ZERO ACCOUNT · REAL-TIME</p>
+    <p>OrderVault — Zero server · Zero account · Real-time</p>
   </footer>
 
 </div><!-- /home -->
@@ -348,7 +345,9 @@
 
   <div class="orders-grid" id="orders-grid">
     <div class="empty-msg" id="empty-msg">
-      <div class="empty-hex">⬡</div>
+      <div class="empty-hex">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" opacity=".25"><rect x="2" y="7" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2" stroke="currentColor" stroke-width="1.5"/></svg>
+      </div>
       <p>Nessun ordine ancora.<br/>Premi <strong>+ Ordine</strong> per iniziare.</p>
     </div>
   </div>
@@ -364,7 +363,7 @@
     <button class="modal-x" id="add-close">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </button>
-    <h2 class="modal-title" id="modal-title-text">// NUOVO ORDINE</h2>
+    <h2 class="modal-title" id="modal-title-text">Nuovo ordine</h2>
 
     <div class="fg full">
       <label>Link prodotto * — incolla e cerco su tutti i siti automaticamente</label>
@@ -385,11 +384,11 @@
     <div class="fg full">
       <label>Categoria *</label>
       <div class="chip-row" id="cat-chips">
-        <button class="chip" data-v="Scarpe">👟 Scarpe</button>
-        <button class="chip" data-v="Maglia">👕 Maglia</button>
-        <button class="chip" data-v="Felpa">🧥 Felpa</button>
-        <button class="chip" data-v="Pantaloni">👖 Pantaloni</button>
-        <button class="chip" data-v="Altro">📦 Altro</button>
+        <button class="chip" data-v="Scarpe">Scarpe</button>
+        <button class="chip" data-v="Maglia">Maglia</button>
+        <button class="chip" data-v="Felpa">Felpa</button>
+        <button class="chip" data-v="Pantaloni">Pantaloni</button>
+        <button class="chip" data-v="Altro">Altro</button>
       </div>
     </div>
 
@@ -441,10 +440,10 @@
     <div class="fg full">
       <label>Stato</label>
       <div class="chip-row" id="status-chips">
-        <button class="chip chip-s active" data-v="In attesa">⏳ In attesa</button>
-        <button class="chip chip-s" data-v="Ordinato">📦 Ordinato</button>
-        <button class="chip chip-s" data-v="Spedito">🚀 Spedito</button>
-        <button class="chip chip-s" data-v="Arrivato">✅ Arrivato</button>
+        <button class="chip chip-s active" data-v="In attesa">In attesa</button>
+        <button class="chip chip-s" data-v="Ordinato">Ordinato</button>
+        <button class="chip chip-s" data-v="Spedito">Spedito</button>
+        <button class="chip chip-s" data-v="Arrivato">Arrivato</button>
       </div>
     </div>
 
@@ -492,7 +491,7 @@
 ════════════════════════════════════════════ -->
 <div class="overlay hidden" id="ov-code">
   <div class="modal modal-code">
-    <h2 class="modal-title">// STANZA CREATA</h2>
+    <h2 class="modal-title">Stanza creata</h2>
     <p class="modal-sub">Condividi questo codice per far unire i tuoi amici</p>
     <div class="big-code-wrap">
       <div class="big-code" id="big-code">000000</div>
@@ -520,7 +519,7 @@
     <button class="modal-x" id="auth-close">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </button>
-    <h2 class="modal-title">// ACCOUNT</h2>
+    <h2 class="modal-title">Account</h2>
 
     <div class="auth-tabs">
       <button class="auth-tab active" data-tab="login">Accedi</button>
