@@ -1,0 +1,5 @@
+config.yaml
+seen_items.json
+venv/
+__pycache__/
+*.pyc

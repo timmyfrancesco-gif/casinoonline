@@ -1,0 +1,20 @@
+# Copia questo file in config.yaml e compila i valori.
+# NON committare mai config.yaml: contiene i cookie di sessione del tuo account.
+
+domain: vinted.it
+
+# Vedi il README per come recuperare questi due cookie dal browser.
+access_token_web: "INCOLLA_QUI_ACCESS_TOKEN_WEB"
+refresh_token_web: "INCOLLA_QUI_REFRESH_TOKEN_WEB"
+
+webhook_url: "https://discord.com/api/webhooks/XXXXXXXXXXXX/YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY"
+
+check_interval_seconds: 60
+storage_path: seen_items.json
+
+# Categorie di eventi da notificare su Discord.
+categories:
+  - order      # nuova vendita
+  - shipping   # aggiornamenti di spedizione
+  - review     # nuove recensioni
+  - wallet     # aggiornamenti saldo/guadagni
