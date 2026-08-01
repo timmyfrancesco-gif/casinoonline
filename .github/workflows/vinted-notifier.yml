@@ -1,0 +1,76 @@
+name: Vinted Notifier
+
+on:
+  schedule:
+    # Ogni 5 minuti (il minimo consentito da GitHub Actions).
+    # I cron di GitHub non sono puntuali: possono ritardare di 5-15 minuti.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Esegui solo il test di configurazione (non invia notifiche reali)"
+        type: boolean
+        default: false
+
+# Evita che due esecuzioni si sovrappongano e si sovrascrivano lo stato a vicenda.
+concurrency:
+  group: vinted-notifier
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # Lo stato salvato in cache contiene i cookie di sessione Vinted. Nei repo
+      # pubblici la cache di Actions e' leggibile anche dai workflow delle fork,
+      # quindi qui l'esecuzione si ferma: rendi il repo privato (consigliato)
+      # oppure imposta la variabile ALLOW_PUBLIC_REPO=true se accetti il rischio.
+      - name: Verifica che il repository sia privato
+        if: github.event.repository.private == false && vars.ALLOW_PUBLIC_REPO != 'true'
+        run: |
+          echo "::error::Repository pubblico. La cache di Actions conserverebbe i cookie di sessione Vinted, leggibili dai workflow delle fork. Rendi il repo privato (Settings -> General -> Danger Zone -> Change visibility) oppure imposta la variabile ALLOW_PUBLIC_REPO=true per procedere comunque."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Installa le dipendenze
+        run: pip install -r requirements.txt
+
+      - name: Ripristina lo stato dell'esecuzione precedente
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            seen_items.json
+            session_state.json
+          key: vinted-state-${{ github.run_id }}
+          restore-keys: |
+            vinted-state-
+
+      - name: Controlla le notifiche Vinted
+        env:
+          VINTED_ACCESS_TOKEN: ${{ secrets.VINTED_ACCESS_TOKEN }}
+          VINTED_REFRESH_TOKEN: ${{ secrets.VINTED_REFRESH_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          VINTED_DOMAIN: ${{ vars.VINTED_DOMAIN }}
+          VINTED_CATEGORIES: ${{ vars.VINTED_CATEGORIES }}
+        run: python main.py ${{ inputs.test && '--test' || '--once' }}
+
+      # La chiave include il run_id perche' le cache di Actions sono immutabili:
+      # ogni esecuzione ne scrive una nuova e la successiva recupera la piu'
+      # recente tramite il prefisso in restore-keys.
+      - name: Salva lo stato aggiornato
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            seen_items.json
+            session_state.json
+          key: vinted-state-${{ github.run_id }}

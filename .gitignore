@@ -1,0 +1,8 @@
+# Contengono i cookie del tuo account Vinted e l'URL del webhook: mai committarli.
+config.yaml
+session_state.json
+
+seen_items.json
+venv/
+__pycache__/
+*.pyc

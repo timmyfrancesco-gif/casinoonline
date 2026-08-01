@@ -1,0 +1,22 @@
+# Serve SOLO se fai girare il bot sul tuo PC.
+# Su GitHub Actions la configurazione arriva dai secrets, questo file non si usa.
+#
+# Copia questo file in config.yaml e compila i valori.
+# config.yaml e' in .gitignore: non verra' mai committato.
+
+domain: vinted.it
+
+# Vedi il README per come recuperare questi due cookie dal browser.
+access_token_web: "INCOLLA_QUI_ACCESS_TOKEN_WEB"
+refresh_token_web: "INCOLLA_QUI_REFRESH_TOKEN_WEB"
+
+webhook_url: "https://discord.com/api/webhooks/XXXXXXXXXXXX/YYYYYYYYYYYYYYYYYYYY"
+
+check_interval_seconds: 60
+
+# Categorie da notificare: rimuovi quelle che non ti interessano.
+categories:
+  - order      # nuova vendita
+  - shipping   # aggiornamenti di spedizione
+  - review     # nuove recensioni
+  - wallet     # aggiornamenti saldo/guadagni
