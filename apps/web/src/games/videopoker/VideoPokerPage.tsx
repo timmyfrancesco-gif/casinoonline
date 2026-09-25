@@ -9,7 +9,7 @@ import {
 import { TABLE_LIMITS, type VideoPokerRoundResponse } from '@casino/shared';
 import { videoPokerDeal, videoPokerDraw, videoPokerOpen } from '../../api/games.ts';
 import { isApiError } from '../../api/client.ts';
-import { errorMessage } from '../../api/errors.ts';
+import { betErrorMessage, errorMessage } from '../../api/errors.ts';
 import {
   queryKeys,
   retryOnNetworkError,
@@ -18,7 +18,7 @@ import {
   useSelfExclusionUntil,
   useSetBalance,
 } from '../../api/hooks.ts';
-import { newIdempotencyKey } from '../../api/idempotency.ts';
+import { useBetIdempotencyKey } from '../../api/idempotency.ts';
 import { Alert } from '../../components/Alert.tsx';
 import { GameHeader } from '../../components/GameHeader.tsx';
 import { PlayingCard, cardName } from '../../components/PlayingCard.tsx';
@@ -67,6 +67,14 @@ export function VideoPokerPage() {
   const [hint, setHint] = useState<HintState>({ status: 'idle' });
   const [announcement, setAnnouncement] = useState('');
   const adopted = useRef(false);
+  const dealKey = useBetIdempotencyKey();
+  // Synchronous double-click guard: `busy` only changes on the next render.
+  const dealInFlight = useRef(false);
+  const controlsRef = useRef<HTMLElement>(null);
+  const dealButtonRef = useRef<HTMLButtonElement>(null);
+  const drawButtonRef = useRef<HTMLButtonElement>(null);
+  // Move focus to the next control once the hand changes (the pressed button is disabled or gone).
+  const refocus = useRef(false);
 
   const open = useQuery({
     queryKey: queryKeys.open('videopoker'),
@@ -84,8 +92,31 @@ export function VideoPokerPage() {
     }
   }, [open.data]);
 
-  const deal = useMutation({ mutationFn: videoPokerDeal, retry: retryOnNetworkError });
-  const draw = useMutation({ mutationFn: videoPokerDraw });
+  // Cached data side of a round answer: balance, plus history and statistics once settled. Kept
+  // apart from the table state because it must also run when the answer arrives after the
+  // player left the page.
+  const syncRound = useCallback(
+    (res: VideoPokerRoundResponse) => {
+      setBalance(res.balance);
+      if (res.state.phase === 'settled') invalidate();
+    },
+    [setBalance, invalidate],
+  );
+
+  // useMutation-level callbacks run even after unmount (the per-call ones of mutate() do not).
+  const deal = useMutation({
+    mutationFn: videoPokerDeal,
+    retry: retryOnNetworkError,
+    onSuccess: (res) => {
+      dealKey.settle();
+      syncRound(res);
+    },
+    onError: (err) => dealKey.settle(err),
+    onSettled: () => {
+      dealInFlight.current = false;
+    },
+  });
+  const draw = useMutation({ mutationFn: videoPokerDraw, onSuccess: syncRound });
 
   const busy = deal.isPending || draw.isPending;
   const state = round?.state ?? null;
@@ -93,43 +124,50 @@ export function VideoPokerPage() {
   const blocked = Boolean(excludedUntil);
   const roundKey = round ? `${round.round.id}:${round.state.step}` : '';
 
-  const applyRound = useCallback(
-    (res: VideoPokerRoundResponse) => {
-      setRound(res);
-      setBalance(res.balance);
-      setHint({ status: 'idle' });
-      const cards = res.state.hand.map(cardName).join(', ');
-      if (res.state.phase === 'hold') {
-        setHeld(res.state.held ?? NO_HOLDS);
-        setAnnouncement(
-          `Carte: ${cards}. Hai: ${VIDEO_POKER_HAND_NAMES_IT[res.state.currentRank]}. Scegli le carte da tenere con i tasti da 1 a 5.`,
-        );
-      } else {
-        invalidate();
-        const r = res.state.result;
-        setAnnouncement(
-          `Mano finale: ${cards}. ${r ? `${VIDEO_POKER_HAND_NAMES_IT[r.rank]}: rientrano ${chipsLabel(r.payout)}.` : ''}`,
-        );
-      }
-    },
-    [setBalance, invalidate],
-  );
+  const applyRound = useCallback((res: VideoPokerRoundResponse) => {
+    setRound(res);
+    setHint({ status: 'idle' });
+    const cards = res.state.hand.map(cardName).join(', ');
+    if (res.state.phase === 'hold') {
+      setHeld(res.state.held ?? NO_HOLDS);
+      setAnnouncement(
+        `Carte: ${cards}. Hai: ${VIDEO_POKER_HAND_NAMES_IT[res.state.currentRank]}. Scegli le carte da tenere con i tasti da 1 a 5.`,
+      );
+    } else {
+      const r = res.state.result;
+      setAnnouncement(
+        `Mano finale: ${cards}. ${r ? `${VIDEO_POKER_HAND_NAMES_IT[r.rank]}: rientrano ${chipsLabel(r.payout)}.` : ''}`,
+      );
+    }
+  }, []);
+
+  const markRefocus = () => {
+    const active = document.activeElement;
+    refocus.current =
+      !active || active === document.body || Boolean(controlsRef.current?.contains(active));
+  };
 
   const onDeal = () => {
-    if (busy || holding || blocked || !open.data) return;
+    if (dealInFlight.current || busy || holding || blocked || open.isPending) return;
+    dealInFlight.current = true;
+    markRefocus();
     setError(null);
     setInfo(null);
     deal.mutate(
-      { amount: stake, idempotencyKey: newIdempotencyKey() },
+      // Same stake after an uncertain failure = same key: the server never deals it twice.
+      { amount: stake, idempotencyKey: dealKey.keyFor(String(stake)) },
       {
         onSuccess: applyRound,
         onError: (err) => {
           if (isApiError(err) && err.code === 'ROUND_ALREADY_OPEN') {
             void open.refetch().then(({ data }) => {
-              if (data?.round) applyRound(data.round);
+              if (data?.round) {
+                syncRound(data.round);
+                applyRound(data.round);
+              }
             });
           }
-          setError(errorMessage(err));
+          setError(betErrorMessage(err));
         },
       },
     );
@@ -137,6 +175,7 @@ export function VideoPokerPage() {
 
   const onDraw = useCallback(() => {
     if (!round || busy || round.state.phase !== 'hold') return;
+    markRefocus();
     setError(null);
     setInfo(null);
     draw.mutate(
@@ -146,6 +185,7 @@ export function VideoPokerPage() {
         onError: (err) => {
           const current = conflictRound(err);
           if (current) {
+            syncRound(current);
             applyRound(current);
             setInfo(
               current.state.phase === 'settled'
@@ -161,7 +201,19 @@ export function VideoPokerPage() {
         },
       },
     );
-  }, [round, busy, draw, held, applyRound, open]);
+  }, [round, busy, draw, held, syncRound, applyRound, open]);
+
+  // Keyboard users keep their place: after the deal focus goes to «Cambia», after the draw to the
+  // deal button (only when focus was lost with the pressed button: never steal it).
+  const phase = round?.state.phase;
+  useEffect(() => {
+    if (busy || !refocus.current) return;
+    refocus.current = false;
+    const active = document.activeElement as HTMLButtonElement | null;
+    if (active && active !== document.body && active.disabled !== true) return;
+    const target = phase === 'hold' ? drawButtonRef.current : dealButtonRef.current;
+    if (target && !target.disabled) target.focus();
+  }, [busy, phase]);
 
   const toggleHold = useCallback(
     (i: number) => {
@@ -237,7 +289,14 @@ export function VideoPokerPage() {
               {PAYING_RANKS.map((rank) => (
                 <tr
                   key={rank}
-                  className={highlightRank === rank ? (result ? 'row-win' : 'row-current') : ''}
+                  className={
+                    highlightRank === rank
+                      ? // Jacks or Better returns the stake (net 0): no win highlight.
+                        result && net > 0
+                        ? 'row-win'
+                        : 'row-current'
+                      : ''
+                  }
                   aria-current={highlightRank === rank ? 'true' : undefined}
                 >
                   <th scope="row">{VIDEO_POKER_HAND_NAMES_IT[rank]}</th>
@@ -301,7 +360,8 @@ export function VideoPokerPage() {
               )}
             </>
           ) : (
-            !open.isPending && (
+            !open.isPending &&
+            !open.isError && (
               <p className="bj-empty">
                 {blocked
                   ? 'Tavolo non disponibile durante la pausa di autoesclusione.'
@@ -312,6 +372,19 @@ export function VideoPokerPage() {
         </section>
       </div>
 
+      {open.isError && (
+        <Alert tone="error" title="Impossibile controllare se hai una mano in corso">
+          <p>{errorMessage(open.error)}</p>
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={() => void open.refetch()}
+            disabled={open.isFetching}
+          >
+            Riprova
+          </button>
+        </Alert>
+      )}
       {info && <Alert tone="info">{info}</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
 
@@ -329,10 +402,12 @@ export function VideoPokerPage() {
         </div>
       )}
 
-      <section className="panel" aria-label="Comandi">
+      <section className="panel" aria-label="Comandi" ref={controlsRef}>
         {holding && state ? (
-          <div className="vp-actions">
+          // Keyed rows: React must not turn the focused deal button into «Suggerimento».
+          <div className="vp-actions" key="hold">
             <button
+              ref={drawButtonRef}
               type="button"
               className="btn btn-primary btn-lg"
               onClick={onDraw}
@@ -372,20 +447,21 @@ export function VideoPokerPage() {
             )}
           </div>
         ) : (
-          <div className="deal-row">
+          <div className="deal-row" key="deal">
             <StakeSelector
               value={stake}
               onChange={setStake}
               limits={LIMITS}
               balance={balance}
-              disabled={busy || !open.data}
+              disabled={busy || open.isPending}
               presets={[1, 2, 5, 10, 25, 50]}
             />
             <button
+              ref={dealButtonRef}
               type="button"
               className="btn btn-primary btn-lg"
               onClick={onDeal}
-              disabled={busy || blocked || !open.data || (balance !== null && stake > balance)}
+              disabled={busy || blocked || open.isPending || (balance !== null && stake > balance)}
             >
               {deal.isPending ? 'Distribuzione…' : `Distribuisci (${chipsLabel(stake)})`}
             </button>

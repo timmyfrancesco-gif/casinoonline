@@ -1,8 +1,14 @@
-import { CSRF_HEADER, CSRF_HEADER_VALUE, SESSION_COOKIE } from '@casino/shared';
+import { CSRF_HEADER, CSRF_HEADER_VALUE } from '@casino/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AppContext } from '../context.ts';
 import { apiError } from '../lib/errors.ts';
-import { clearSessionCookie, loadSession, sessionToken, type AuthContext } from './sessions.ts';
+import {
+  clearSessionCookie,
+  loadSession,
+  sessionCookieName,
+  sessionToken,
+  type AuthContext,
+} from './sessions.ts';
 
 /**
  * CSRF (SPEC §6): every non-GET/HEAD request needs `x-casino-csrf: 1` and, when an Origin
@@ -24,10 +30,10 @@ export function csrfHook(ctx: AppContext) {
 /** preHandler: resolves the session cookie into request.auth or answers 401. */
 export function requireAuth(ctx: AppContext) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    const token = sessionToken(request);
+    const token = sessionToken(ctx, request);
     const auth = token === null ? null : await loadSession(ctx, token);
     if (auth === null) {
-      if (request.cookies[SESSION_COOKIE] !== undefined) clearSessionCookie(ctx, reply);
+      if (request.cookies[sessionCookieName(ctx)] !== undefined) clearSessionCookie(ctx, reply);
       throw apiError('UNAUTHENTICATED');
     }
     request.auth = auth;

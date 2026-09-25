@@ -18,6 +18,7 @@ function DetailBody({ detail }: { detail: RoundDetailData }) {
     case 'roulette': {
       const { settlement } = detail;
       const color = numberColor(settlement.number);
+      const net = settlement.totalWin - settlement.totalBet;
       return (
         <>
           <p className="detail-headline">
@@ -41,7 +42,8 @@ function DetailBody({ detail }: { detail: RoundDetailData }) {
             </thead>
             <tbody>
               {settlement.bets.map((r, i) => (
-                <tr key={i} className={r.win > 0 ? 'row-win' : ''}>
+                // A winning bet in a spin lost overall is not celebrated (loss disguised as win).
+                <tr key={i} className={r.win > 0 ? (net > 0 ? 'row-win' : 'row-current') : ''}>
                   <td>{betLabel(targetOf(r.bet))}</td>
                   <td className="num">{chipsLabel(r.bet.amount)}</td>
                   <td className="num">{ROULETTE_PAYOUTS[r.bet.type]}:1</td>

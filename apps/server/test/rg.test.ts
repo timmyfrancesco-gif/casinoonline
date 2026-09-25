@@ -104,6 +104,33 @@ describe('loss limits', () => {
     expect(exact.statusCode, exact.body).toBe(200);
   });
 
+  it('reports the remaining stake in whole chips after a 3:2 payout', async () => {
+    const p = await registerPlayer(env.app);
+    // Blackjack pays 3:2: +1,50 chips, then -5 chips on red: 3,50 chips used.
+    await prepareNextRound(
+      p,
+      env.pool,
+      blackjackDealWith(CHIP, (st) => st.result?.hands[0]?.outcome === 'blackjack'),
+    );
+    const bj = await p.post('/api/games/blackjack/deal', { amount: CHIP, idempotencyKey: key() });
+    expect(bj.json<BlackjackRoundResponse>().round).toMatchObject({
+      status: 'settled',
+      payout: 250,
+    });
+    await loseOnRed(p, 5 * CHIP);
+
+    const status = await setLimit(p, '24h', 13 * CHIP);
+    // The status stays exact: value = used + remaining.
+    expect(status.lossLimits['24h']).toMatchObject({ used: 350, remaining: 950 });
+
+    const over = await p.post('/api/games/slot/spin', { amount: 10 * CHIP, idempotencyKey: key() });
+    const err = expectError(over, 403, 'RG_LOSS_LIMIT');
+    expect(err.details).toEqual({ period: '24h', remaining: 9 * CHIP });
+    expect(err.message).toContain('al massimo 9 fiches');
+    const max = await p.post('/api/games/slot/spin', { amount: 9 * CHIP, idempotencyKey: key() });
+    expect(max.statusCode, max.body).toBe(200);
+  });
+
   it('reports the tightest violated period', async () => {
     const p = await registerPlayer(env.app);
     await setLimit(p, '24h', 30 * CHIP);

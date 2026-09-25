@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import { ROULETTE_PAYOUTS, UNITS_PER_CHIP, type RouletteInsideType } from '@casino/engine';
 import { ROULETTE_MAX_BETS, TABLE_LIMITS, type RouletteSpinResponse } from '@casino/shared';
 import { spinRoulette } from '../../api/games.ts';
-import { errorMessage } from '../../api/errors.ts';
+import { betErrorMessage } from '../../api/errors.ts';
 import {
   queryKeys,
   retryOnNetworkError,
@@ -13,12 +13,13 @@ import {
   useSelfExclusionUntil,
   useSetBalance,
 } from '../../api/hooks.ts';
-import { newIdempotencyKey } from '../../api/idempotency.ts';
+import { useBetIdempotencyKey } from '../../api/idempotency.ts';
 import { Alert } from '../../components/Alert.tsx';
 import { ChipSelector } from '../../components/Chip.tsx';
 import { GameHeader } from '../../components/GameHeader.tsx';
 import { chipsLabel } from '../../lib/format.ts';
 import { useReducedMotion } from '../../lib/motion.ts';
+import { useAnnouncer } from '../../lib/useAnnouncer.ts';
 import { usePageTitle } from '../../lib/usePageTitle.ts';
 import {
   COLOR_NAMES_IT,
@@ -85,25 +86,57 @@ export function RoulettePage() {
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [lastPlacements, setLastPlacements] = useState<Placement[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [announcement, setAnnouncement] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [announcement, announce] = useAnnouncer();
   const [spin, setSpin] = useState<{ id: number; response: RouletteSpinResponse } | null>(null);
   const [revealed, setRevealed] = useState(true);
-  const pendingBalance = useRef<number | null>(null);
   const wheelRef = useRef<HTMLDivElement>(null);
+  const spinButtonRef = useRef<HTMLButtonElement>(null);
+  const repeatButtonRef = useRef<HTMLButtonElement>(null);
   const reducedMotion = useReducedMotion();
+  const spinKey = useBetIdempotencyKey();
+  // Spin settled by the server but not shown yet (request pending or wheel still turning).
+  const unrevealed = useRef<RouletteSpinResponse | null>(null);
+  const mounted = useRef(false);
+  // Synchronous double-click guard: `busy` only changes on the next render.
+  const inFlight = useRef(false);
+  // Give focus back to the controls after the spin (the spin button is disabled meanwhile).
+  const refocus = useRef(false);
+
+  // The spin is over for the player even if they never see it: balance, history, statistics,
+  // limits and recent numbers are brought up to date.
+  const flushUnrevealed = useCallback(() => {
+    const response = unrevealed.current;
+    if (!response) return;
+    unrevealed.current = null;
+    setBalance(response.balance);
+    pushRecent(response.settlement.number);
+    invalidate();
+  }, [setBalance, pushRecent, invalidate]);
 
   const mutation = useMutation({
     mutationFn: spinRoulette,
     retry: retryOnNetworkError,
+    // These run even after the page unmounted (the per-call callbacks of mutate() do not).
+    onSuccess: (response) => {
+      unrevealed.current = response;
+      spinKey.settle();
+      if (!mounted.current) flushUnrevealed();
+    },
+    onError: (err) => spinKey.settle(err),
+    onSettled: () => {
+      inFlight.current = false;
+    },
   });
 
-  // Leaving mid-animation: show the final balance anyway.
-  useEffect(
-    () => () => {
-      if (pendingBalance.current !== null) setBalance(pendingBalance.current);
-    },
-    [setBalance],
-  );
+  // Leaving while the request is pending or the wheel turns: apply the result anyway.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      flushUnrevealed();
+    };
+  }, [flushUnrevealed]);
 
   const bets = useMemo(() => aggregateBets(placements), [placements]);
   const stakes = useMemo(() => {
@@ -127,13 +160,13 @@ export function RoulettePage() {
     const result = placeChip(placements, target, chip * UNITS_PER_CHIP, rules);
     if (!result.ok) {
       setNotice(result.reason);
-      setAnnouncement(result.reason);
+      announce(result.reason);
       return;
     }
     setNotice(null);
     setPlacements(result.placements);
     const newTotal = totalStake(aggregateBets(result.placements));
-    setAnnouncement(
+    announce(
       `${chipsLabel(chip * UNITS_PER_CHIP)} su ${betLabel(target)}. Totale puntato ${chipsLabel(newTotal)}.`,
     );
   };
@@ -151,7 +184,7 @@ export function RoulettePage() {
     } else if (result.status === 'partial') {
       setPicked(result.selected);
       setCandidates(result.candidates);
-      setAnnouncement(
+      announce(
         `Selezionato ${result.selected.join(', ')}. ${result.candidates.length} combinazioni possibili: tocca un altro numero.`,
       );
     } else {
@@ -159,7 +192,7 @@ export function RoulettePage() {
       setCandidates([]);
       const msg = `Il numero ${n} non fa parte di nessuna puntata ${INSIDE_TYPE_NAMES_IT[mode]}.`;
       setNotice(msg);
-      setAnnouncement(msg);
+      announce(msg);
     }
   };
 
@@ -173,23 +206,25 @@ export function RoulettePage() {
   const undo = () => {
     setPlacements((p) => p.slice(0, -1));
     setNotice(null);
-    setAnnouncement('Ultima fiche rimossa.');
+    announce('Ultima fiche rimossa.');
   };
   const clear = () => {
     setPlacements([]);
     setNotice(null);
-    setAnnouncement('Tutte le puntate rimosse.');
+    announce('Tutte le puntate rimosse.');
   };
   const removeBet = (key: string) => {
     setPlacements((p) => p.filter((x) => betKey(x.target) !== key));
-    setAnnouncement('Puntata rimossa.');
+    announce('Puntata rimossa.');
   };
   const repeat = () => {
     let next: Placement[] = [];
     for (const p of lastPlacements) {
       const r = placeChip(next, p.target, p.amount, rules);
       if (!r.ok) {
-        setNotice(`Impossibile ripetere tutte le puntate: ${r.reason}`);
+        const msg = `Impossibile ripetere tutte le puntate: ${r.reason}`;
+        setNotice(msg);
+        announce(msg);
         break;
       }
       next = r.placements;
@@ -198,20 +233,24 @@ export function RoulettePage() {
   };
 
   const onSpin = () => {
-    if (bets.length === 0 || busy || blocked) return;
+    if (inFlight.current || bets.length === 0 || busy || blocked) return;
+    inFlight.current = true;
+    const active = document.activeElement;
+    refocus.current = !active || active === document.body || active === spinButtonRef.current;
     setNotice(null);
-    const request = { bets, idempotencyKey: newIdempotencyKey() };
+    setError(null);
+    // Same bets after an uncertain failure = same key: the server never takes them twice.
+    const request = { bets, idempotencyKey: spinKey.keyFor(JSON.stringify(bets)) };
     mutation.mutate(request, {
       onSuccess: (response) => {
         // Stake is taken now; winnings are credited when the ball stops.
-        pendingBalance.current = response.balance;
         setBalance(response.balance - response.settlement.totalWin);
         setLastPlacements(placements);
         setPlacements([]);
         setPicked([]);
         setCandidates([]);
         setRevealed(false);
-        setAnnouncement('La ruota gira…');
+        announce('La ruota gira…');
         setSpin((prev) => ({ id: (prev?.id ?? 0) + 1, response }));
         // Keep the wheel in sight while it spins (the table may be scrolled below it).
         wheelRef.current?.scrollIntoView?.({
@@ -219,29 +258,36 @@ export function RoulettePage() {
           block: 'nearest',
         });
       },
-      onError: (err) => {
-        const msg = errorMessage(err);
-        setNotice(msg);
-        setAnnouncement(msg);
-      },
+      // The error alert (role="alert") announces itself.
+      onError: (err) => setError(betErrorMessage(err)),
     });
   };
 
   const onSettled = useCallback(() => {
     if (!spin) return;
-    const { settlement, balance: finalBalance } = spin.response;
-    pendingBalance.current = null;
-    setBalance(finalBalance);
+    const { settlement } = spin.response;
+    if (unrevealed.current === spin.response) flushUnrevealed();
     setRevealed(true);
-    pushRecent(settlement.number);
-    invalidate();
     const color = COLOR_NAMES_IT[numberColor(settlement.number)];
     const outcome =
       settlement.totalWin > 0
         ? `Rientrano ${chipsLabel(settlement.totalWin)} su ${chipsLabel(settlement.totalBet)} puntate.`
         : `Nessuna vincita: puntate ${chipsLabel(settlement.totalBet)}.`;
-    setAnnouncement(`È uscito il ${settlement.number} ${color}. ${outcome}`);
-  }, [spin, setBalance, pushRecent, invalidate]);
+    announce(`È uscito il ${settlement.number} ${color}. ${outcome}`);
+  }, [spin, flushUnrevealed, announce]);
+
+  // Keyboard users keep their place: once the spin is over (or failed), focus returns to the
+  // spin button, or to «Ripeti puntate» when no bets are left on the table.
+  useEffect(() => {
+    if (busy || !refocus.current) return;
+    refocus.current = false;
+    // Only when focus was lost (the pressed button was disabled): never steal it.
+    const active = document.activeElement as HTMLButtonElement | null;
+    if (active && active !== document.body && active.disabled !== true) return;
+    const spinButton = spinButtonRef.current;
+    const target = spinButton && !spinButton.disabled ? spinButton : repeatButtonRef.current;
+    if (target && !target.disabled) target.focus();
+  }, [busy]);
 
   const highlighted = useMemo(() => new Set(candidates.flat()), [candidates]);
   const selected = useMemo(() => new Set(picked), [picked]);
@@ -296,6 +342,12 @@ export function RoulettePage() {
                 return (
                   <li key={`${i}-${n}`} className={`recent-number rt-${c}`}>
                     <span>{n}</span>
+                    {/* Visible R/N so red and black do not rely on colour alone. */}
+                    {c !== 'green' && (
+                      <span className="recent-color-tag" aria-hidden="true">
+                        {c === 'red' ? 'R' : 'N'}
+                      </span>
+                    )}
                     <span className="visually-hidden"> {COLOR_NAMES_IT[c]}</span>
                   </li>
                 );
@@ -358,7 +410,12 @@ export function RoulettePage() {
           </p>
         </div>
 
-        {notice && <Alert tone="warning">{notice}</Alert>}
+        {notice && (
+          <Alert tone="warning" live={false}>
+            {notice}
+          </Alert>
+        )}
+        {error && <Alert tone="error">{error}</Alert>}
 
         <div className="bet-summary">
           <p className="bet-total">
@@ -386,6 +443,7 @@ export function RoulettePage() {
               Cancella tutto
             </button>
             <button
+              ref={repeatButtonRef}
               type="button"
               className="btn"
               onClick={repeat}
@@ -394,6 +452,7 @@ export function RoulettePage() {
               Ripeti puntate
             </button>
             <button
+              ref={spinButtonRef}
               type="button"
               className="btn btn-primary btn-lg"
               onClick={onSpin}
@@ -471,11 +530,12 @@ export function RoulettePage() {
               </thead>
               <tbody>
                 {settlement.bets.map((r, i) => (
-                  <tr key={i} className={r.win > 0 ? 'row-win' : ''}>
+                  // A winning bet in a spin lost overall is not celebrated (loss disguised as win).
+                  <tr key={i} className={r.win > 0 ? (net > 0 ? 'row-win' : 'row-current') : ''}>
                     <td>{betLabel(targetOf(r.bet))}</td>
                     <td className="num">{chipsLabel(r.bet.amount)}</td>
                     <td className="num">{chipsLabel(r.win)}</td>
-                    <td>{r.win > 0 ? 'Vinta' : 'Persa'}</td>
+                    <td>{r.win > 0 ? (net > 0 ? 'Vinta' : 'Rientro parziale') : 'Persa'}</td>
                   </tr>
                 ))}
               </tbody>

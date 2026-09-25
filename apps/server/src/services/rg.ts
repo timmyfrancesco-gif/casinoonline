@@ -1,4 +1,4 @@
-import { formatChips } from '@casino/engine';
+import { formatChips, UNITS_PER_CHIP } from '@casino/engine';
 import {
   LIMIT_INCREASE_DELAY_MS,
   LOSS_LIMIT_PERIODS,
@@ -100,7 +100,10 @@ export async function assertLossLimits(
   const used = await lossUsed(client, userId, now);
   let worst: { period: LossLimitPeriod; remaining: number } | null = null;
   for (const period of withValue) {
-    const remaining = Math.max(0, limits[period].value! - used[period]);
+    // Stakes are whole chips: report the largest stake still allowed, not the exact margin
+    // (which a 3:2 blackjack payout can leave fractional).
+    const margin = Math.max(0, limits[period].value! - used[period]);
+    const remaining = Math.floor(margin / UNITS_PER_CHIP) * UNITS_PER_CHIP;
     if (used[period] + stake > limits[period].value!) {
       if (worst === null || remaining < worst.remaining) worst = { period, remaining };
     }

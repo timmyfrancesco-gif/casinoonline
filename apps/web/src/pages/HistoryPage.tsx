@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { GAME_IDS, GAME_NAMES_IT, type GameId } from '@casino/engine';
-import { HISTORY_CSV_URL } from '../api/history.ts';
+import { historyCsvUrl } from '../api/history.ts';
 import { useHistory } from '../api/hooks.ts';
 import { errorMessage } from '../api/errors.ts';
 import { Alert } from '../components/Alert.tsx';
@@ -11,6 +11,9 @@ import { chipsLabel, formatDateTime } from '../lib/format.ts';
 import { usePageTitle } from '../lib/usePageTitle.ts';
 
 const PAGE_SIZE = 25;
+/** Cursor stack: [undefined] is the first page. */
+type Cursors = (string | undefined)[];
+const FIRST_PAGE: Cursors = [undefined];
 
 function parseGame(value: string | null): GameId | undefined {
   return GAME_IDS.find((g) => g === value);
@@ -21,8 +24,19 @@ export function HistoryPage() {
   const [params, setParams] = useSearchParams();
   const game = parseGame(params.get('game'));
   const navigate = useNavigate();
-  // Cursor stack: [undefined] is the first page.
-  const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
+  const location = useLocation();
+  // The stack belongs to one navigation: a new filter or a click on the «Storico» link starts
+  // again from the newest rounds (derived, so no request is made with a stale cursor).
+  const [paging, setPaging] = useState<{ key: string; cursors: Cursors }>(() => ({
+    key: location.key,
+    cursors: FIRST_PAGE,
+  }));
+  const cursors = paging.key === location.key ? paging.cursors : FIRST_PAGE;
+  const setCursors = (update: (current: Cursors) => Cursors) =>
+    setPaging((p) => ({
+      key: location.key,
+      cursors: update(p.key === location.key ? p.cursors : FIRST_PAGE),
+    }));
   const cursor = cursors[cursors.length - 1];
   const query = useHistory(game, cursor, PAGE_SIZE);
 
@@ -31,7 +45,6 @@ export function HistoryPage() {
     if (value) next.set('game', value);
     else next.delete('game');
     setParams(next, { replace: true });
-    setCursors([undefined]);
   };
 
   const page = query.data;
@@ -46,8 +59,8 @@ export function HistoryPage() {
             Tutte le partite giocate, con risultato netto e dati per la verifica.
           </p>
         </div>
-        <a className="btn" href={HISTORY_CSV_URL} download>
-          Scarica CSV
+        <a className="btn" href={historyCsvUrl(game)} download>
+          {game ? `Scarica CSV (${GAME_NAMES_IT[game]})` : 'Scarica CSV'}
         </a>
       </div>
 

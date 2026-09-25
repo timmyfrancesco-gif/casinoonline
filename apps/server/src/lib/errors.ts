@@ -153,6 +153,13 @@ export function errorHandler(error: unknown, request: FastifyRequest, reply: Fas
     request.log.error({ err: error }, 'errore non gestito');
   } else if (apiErr.status >= 500) {
     request.log.error({ err: error }, apiErr.message);
+  } else {
+    const sqlState = pgCode(error);
+    if (sqlState === '40P01' || sqlState === '40001') {
+      // The user lock at READ COMMITTED should make these impossible: a deadlock or a
+      // misconfigured isolation level must not go unnoticed behind a plain 409.
+      request.log.warn({ err: error, sqlState }, 'conflitto di concorrenza nel database');
+    }
   }
   void reply.status(apiErr.status).type('application/json; charset=utf-8').send(apiErr.toBody());
 }

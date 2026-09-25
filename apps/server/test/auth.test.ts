@@ -1,6 +1,7 @@
 import { STARTING_BALANCE } from '@casino/engine';
 import { SESSION_IDLE_MS, SESSION_TTL_MS, type MeResponse } from '@casino/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { buildApp } from '../src/app.ts';
 import { isAdult } from '../src/routes/auth.ts';
 import {
   client,
@@ -10,6 +11,7 @@ import {
   loginPlayer,
   PASSWORD,
   registerPlayer,
+  testConfig,
   truncateAll,
   type TestEnv,
 } from './helpers.ts';
@@ -208,7 +210,7 @@ describe('login and sessions', () => {
     expectError(await p.get('/api/wallet'), 401, 'UNAUTHENTICATED');
   });
 
-  it('change password keeps the current session and revokes the others', async () => {
+  it('change password keeps the current session under a new token and revokes the others', async () => {
     const a = await registerPlayer(env.app, 'Anna');
     const b = await loginPlayer(env.app, 'Anna');
     const wrong = await a.post('/api/account/password', {
@@ -217,12 +219,21 @@ describe('login and sessions', () => {
     });
     expectError(wrong, 401, 'INVALID_CREDENTIALS');
 
+    const oldCookie = a.cookie;
+    env.clock.advance(5 * 60_000);
     const res = await a.post('/api/account/password', {
       currentPassword: PASSWORD,
       newPassword: 'nuova-password-456',
     });
     expect(res.statusCode, res.body).toBe(204);
-    expect((await a.get('/api/auth/me')).statusCode).toBe(200);
+    expect(a.cookie).not.toBeNull();
+    expect(a.cookie).not.toBe(oldCookie);
+    const me = await a.get('/api/auth/me');
+    expect(me.statusCode).toBe(200);
+    // Same session (its start is kept for the reality check and the session stats).
+    expect(me.json<MeResponse>().sessionStartedAt).toBe(a.me.sessionStartedAt);
+    // A copy of the old cookie (e.g. a stolen one) no longer works.
+    expectError(await client(env.app, oldCookie).get('/api/auth/me'), 401, 'UNAUTHENTICATED');
     expectError(await b.get('/api/auth/me'), 401, 'UNAUTHENTICATED');
 
     expectError(
@@ -231,6 +242,42 @@ describe('login and sessions', () => {
       'INVALID_CREDENTIALS',
     );
     await loginPlayer(env.app, 'Anna', 'nuova-password-456');
+  });
+
+  it('login racing the account deletion answers 401, not 500', async () => {
+    const p = await registerPlayer(env.app, 'Fantasma');
+    // The account is deleted between the password check and the session insert.
+    let deleted = false;
+    const racingPool = new Proxy(env.pool, {
+      get(target, prop) {
+        if (prop === 'query') {
+          return async (text: string, params?: unknown[]) => {
+            if (!deleted && text.startsWith('INSERT INTO sessions')) {
+              deleted = true;
+              await target.query('DELETE FROM users WHERE id = $1', [p.userId]);
+            }
+            return target.query(text, params);
+          };
+        }
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const app = await buildApp({
+      config: testConfig(),
+      pool: racingPool,
+      rateLimits: { global: 100_000, auth: 100_000 },
+    });
+    try {
+      const res = await client(app).post('/api/auth/login', {
+        username: 'Fantasma',
+        password: PASSWORD,
+      });
+      expect(deleted).toBe(true);
+      expectError(res, 401, 'INVALID_CREDENTIALS');
+    } finally {
+      await app.close();
+    }
   });
 
   it('delete account removes every row of the user', async () => {
@@ -259,6 +306,7 @@ describe('login and sessions', () => {
       'sessions',
       'wallets',
       'seed_pairs',
+      'next_server_seeds',
       'rounds',
       'ledger',
       'loss_limits',
@@ -274,5 +322,45 @@ describe('login and sessions', () => {
     expect((await other.get('/api/wallet')).statusCode).toBe(200);
     // The username is free again.
     await registerPlayer(env.app, 'cancellami');
+  });
+});
+
+describe('secure session cookie', () => {
+  it('uses the __Host- prefix with Secure, Path=/ and no Domain when cookies are secure', async () => {
+    const secure = await createTestEnv({ config: { cookieSecure: true } });
+    try {
+      const res = await secure.app.inject({
+        method: 'POST',
+        url: '/api/auth/register',
+        headers: { 'x-casino-csrf': '1' },
+        payload: {
+          username: 'sicuro',
+          password: PASSWORD,
+          birthDate: '1990-05-17',
+          acceptTerms: true,
+        },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const cookie = res.cookies.find((c) => c.name === '__Host-casino_sid');
+      expect(cookie).toMatchObject({ secure: true, httpOnly: true, path: '/', sameSite: 'Lax' });
+      expect(cookie?.domain).toBeUndefined();
+      expect(res.cookies.some((c) => c.name === 'casino_sid')).toBe(false);
+
+      const me = await secure.app.inject({
+        method: 'GET',
+        url: '/api/auth/me',
+        cookies: { '__Host-casino_sid': cookie!.value },
+      });
+      expect(me.statusCode, me.body).toBe(200);
+      // The unprefixed name is not accepted when cookies are secure.
+      const plain = await secure.app.inject({
+        method: 'GET',
+        url: '/api/auth/me',
+        cookies: { casino_sid: cookie!.value },
+      });
+      expect(plain.statusCode).toBe(401);
+    } finally {
+      await secure.close();
+    }
   });
 });

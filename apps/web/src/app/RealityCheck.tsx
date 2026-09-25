@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router';
+import { HELPLINE } from '@casino/shared';
 import { useMe, useRg } from '../api/hooks.ts';
 import { NetAmount } from '../components/Amount.tsx';
 import { Modal } from '../components/Modal.tsx';
@@ -16,7 +18,8 @@ export function nextRealityCheckDue(acknowledgedElapsedMs: number, intervalMs: n
 /**
  * Reality check: every `realityCheckMinutes` of session a blocking dialog shows the elapsed
  * time, rounds played and net result. The player continues or logs out.
- * The acknowledged threshold is kept per session so a reload does not skip a due check.
+ * The acknowledged threshold is kept per session so a reload does not skip a due check; it is
+ * also held in memory, so the dialog can be dismissed when Web Storage is unavailable.
  */
 export function RealityCheck() {
   const { data: me } = useMe();
@@ -24,6 +27,8 @@ export function RealityCheck() {
   const { signOut, isPending: signingOut } = useSignOut();
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  // Last acknowledged elapsed time of this session (storage may be blocked or throw).
+  const [ack, setAck] = useState<{ key: string; ms: number } | null>(null);
 
   const rg = rgQuery.data;
   const intervalMs = (rg?.realityCheckMinutes ?? 30) * 60_000;
@@ -34,7 +39,10 @@ export function RealityCheck() {
 
   useEffect(() => {
     if (!sessionKey || startClient === null || open) return undefined;
-    const acknowledged = Number(readStorage(sessionKey, 'session') ?? '0') || 0;
+    const acknowledged = Math.max(
+      ack?.key === sessionKey ? ack.ms : 0,
+      Number(readStorage(sessionKey, 'session') ?? '0') || 0,
+    );
     const dueAt = startClient + nextRealityCheckDue(acknowledged, intervalMs);
     const timer = window.setTimeout(
       () => {
@@ -45,7 +53,7 @@ export function RealityCheck() {
       Math.max(0, dueAt - Date.now()),
     );
     return () => window.clearTimeout(timer);
-  }, [sessionKey, startClient, intervalMs, open, refetch]);
+  }, [sessionKey, startClient, intervalMs, open, refetch, ack]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -61,8 +69,13 @@ export function RealityCheck() {
   if (!me || !rg || startClient === null) return null;
   const elapsed = now - startClient;
 
-  const onContinue = () => {
-    if (sessionKey) writeStorage(sessionKey, String(Date.now() - startClient), 'session');
+  // Continuing (or opening the RG tools) acknowledges the check until the next interval.
+  const acknowledge = () => {
+    if (sessionKey) {
+      const ms = Date.now() - startClient;
+      setAck({ key: sessionKey, ms });
+      writeStorage(sessionKey, String(ms), 'session');
+    }
     setOpen(false);
   };
   const onExit = () => {
@@ -94,16 +107,29 @@ export function RealityCheck() {
           </div>
         </dl>
         <p className="muted">
-          Le fiches sono virtuali. Fai una pausa quando vuoi: puoi cambiare la frequenza di questo
-          promemoria nella pagina Gioco responsabile.
+          Le fiches sono virtuali. Fai una pausa quando vuoi: nella pagina{' '}
+          <Link to="/gioco-responsabile" onClick={acknowledge}>
+            Gioco responsabile
+          </Link>{' '}
+          puoi impostare limiti di perdita, una pausa di autoesclusione o la frequenza di questo
+          promemoria.
+        </p>
+        <p className="small">
+          Se il gioco non è più un divertimento: {HELPLINE.name},{' '}
+          <a href={`tel:${HELPLINE.phone.replace(/\s/g, '')}`} className="helpline-number">
+            {HELPLINE.phone}
+          </a>{' '}
+          (gratuito e anonimo).
         </p>
       </div>
+      {/* Same weight for both choices, and no autofocus: the dialog itself takes focus so a
+          stray Enter or Space does not dismiss the check unread. */}
       <div className="modal-actions">
-        <button type="button" className="btn btn-primary" onClick={onContinue} data-autofocus>
-          Continua a giocare
-        </button>
         <button type="button" className="btn" onClick={onExit} disabled={signingOut}>
           Esci
+        </button>
+        <button type="button" className="btn" onClick={acknowledge}>
+          Continua a giocare
         </button>
       </div>
     </Modal>

@@ -9,7 +9,7 @@ import {
 import { TABLE_LIMITS, type BlackjackRoundResponse } from '@casino/shared';
 import { blackjackAction, blackjackDeal, blackjackOpen } from '../../api/games.ts';
 import { isApiError } from '../../api/client.ts';
-import { errorMessage } from '../../api/errors.ts';
+import { betErrorMessage, errorMessage } from '../../api/errors.ts';
 import {
   queryKeys,
   retryOnNetworkError,
@@ -18,7 +18,7 @@ import {
   useSelfExclusionUntil,
   useSetBalance,
 } from '../../api/hooks.ts';
-import { newIdempotencyKey } from '../../api/idempotency.ts';
+import { useBetIdempotencyKey } from '../../api/idempotency.ts';
 import { Alert } from '../../components/Alert.tsx';
 import { GameHeader } from '../../components/GameHeader.tsx';
 import { PlayingCard, cardName } from '../../components/PlayingCard.tsx';
@@ -121,6 +121,13 @@ export function BlackjackPage() {
   const [showHint, setShowHint] = useState(false);
   const [announcement, setAnnouncement] = useState('');
   const adopted = useRef(false);
+  const dealKey = useBetIdempotencyKey();
+  // Synchronous double-click guard: `busy` only changes on the next render.
+  const dealInFlight = useRef(false);
+  const controlsRef = useRef<HTMLElement>(null);
+  const dealButtonRef = useRef<HTMLButtonElement>(null);
+  // Move focus to the next control once the hand changes (the pressed button is disabled or gone).
+  const refocus = useRef(false);
 
   const open = useQuery({
     queryKey: queryKeys.open('blackjack'),
@@ -138,9 +145,6 @@ export function BlackjackPage() {
       setInfo('Hai una mano in corso: puoi completarla.');
     }
   }, [open.data]);
-
-  const deal = useMutation({ mutationFn: blackjackDeal, retry: retryOnNetworkError });
-  const action = useMutation({ mutationFn: blackjackAction });
 
   const describe = useCallback((res: BlackjackRoundResponse): string => {
     const s = res.state;
@@ -163,35 +167,71 @@ export function BlackjackPage() {
     return `Le tue carte: ${cards}, totale ${hand ? totalText(hand.total, hand.soft) : ''}. Il banco mostra ${dealerVisible}.`;
   }, []);
 
+  // Cached data side of a round answer: balance, plus history and statistics once settled. Kept
+  // apart from the table state because it must also run when the answer arrives after the
+  // player left the page.
+  const syncRound = useCallback(
+    (res: BlackjackRoundResponse) => {
+      setBalance(res.balance);
+      if (res.state.phase === 'settled') invalidate();
+    },
+    [setBalance, invalidate],
+  );
+
   const applyRound = useCallback(
     (res: BlackjackRoundResponse) => {
       setRound(res);
-      setBalance(res.balance);
       setAnnouncement(describe(res));
-      if (res.state.phase === 'settled') invalidate();
     },
-    [setBalance, describe, invalidate],
+    [describe],
   );
+
+  // useMutation-level callbacks run even after unmount (the per-call ones of mutate() do not).
+  const deal = useMutation({
+    mutationFn: blackjackDeal,
+    retry: retryOnNetworkError,
+    onSuccess: (res) => {
+      dealKey.settle();
+      syncRound(res);
+    },
+    onError: (err) => dealKey.settle(err),
+    onSettled: () => {
+      dealInFlight.current = false;
+    },
+  });
+  const action = useMutation({ mutationFn: blackjackAction, onSuccess: syncRound });
 
   const busy = deal.isPending || action.isPending;
   const playing = round?.state.phase === 'player';
   const blocked = Boolean(excludedUntil);
 
+  const markRefocus = () => {
+    const active = document.activeElement;
+    refocus.current =
+      !active || active === document.body || Boolean(controlsRef.current?.contains(active));
+  };
+
   const onDeal = () => {
-    if (busy || playing || blocked || !open.data) return;
+    if (dealInFlight.current || busy || playing || blocked || open.isPending) return;
+    dealInFlight.current = true;
+    markRefocus();
     setError(null);
     setInfo(null);
     deal.mutate(
-      { amount: stake, idempotencyKey: newIdempotencyKey() },
+      // Same stake after an uncertain failure = same key: the server never deals it twice.
+      { amount: stake, idempotencyKey: dealKey.keyFor(String(stake)) },
       {
         onSuccess: applyRound,
         onError: (err) => {
           if (isApiError(err) && err.code === 'ROUND_ALREADY_OPEN') {
             void open.refetch().then(({ data }) => {
-              if (data?.round) setRound(data.round);
+              if (data?.round) {
+                syncRound(data.round);
+                applyRound(data.round);
+              }
             });
           }
-          setError(errorMessage(err));
+          setError(betErrorMessage(err));
         },
       },
     );
@@ -201,6 +241,7 @@ export function BlackjackPage() {
     (act: BlackjackAction) => {
       if (!round || busy || round.state.phase !== 'player') return;
       if (!round.state.allowedActions.includes(act)) return;
+      markRefocus();
       setError(null);
       setInfo(null);
       action.mutate(
@@ -210,6 +251,7 @@ export function BlackjackPage() {
           onError: (err) => {
             const current = conflictRound(err);
             if (current) {
+              syncRound(current);
               applyRound(current);
               setInfo(
                 current.state.phase === 'settled'
@@ -226,8 +268,25 @@ export function BlackjackPage() {
         },
       );
     },
-    [round, busy, action, applyRound, open],
+    [round, busy, action, syncRound, applyRound, open],
   );
+
+  // Keyboard users keep their place: after a deal or a move, focus goes to the first available
+  // move, or to the deal button once the hand is over (unless the player moved focus elsewhere).
+  const phase = round?.state.phase;
+  const step = round?.state.step;
+  useEffect(() => {
+    if (busy || !refocus.current) return;
+    refocus.current = false;
+    // Only when focus was lost (pressed button removed or disabled): never steal it.
+    const active = document.activeElement as HTMLButtonElement | null;
+    if (active && active !== document.body && active.disabled !== true) return;
+    const target =
+      phase === 'player'
+        ? controlsRef.current?.querySelector<HTMLButtonElement>('.action-row button:not(:disabled)')
+        : dealButtonRef.current;
+    if (target && !target.disabled) target.focus();
+  }, [busy, phase, step]);
 
   // Keyboard shortcuts H / S / D / P.
   useEffect(() => {
@@ -302,7 +361,8 @@ export function BlackjackPage() {
             </div>
           </>
         ) : (
-          !open.isPending && (
+          !open.isPending &&
+          !open.isError && (
             <p className="bj-empty">
               {blocked
                 ? 'Tavolo non disponibile durante la pausa di autoesclusione.'
@@ -312,6 +372,19 @@ export function BlackjackPage() {
         )}
       </section>
 
+      {open.isError && (
+        <Alert tone="error" title="Impossibile controllare se hai una mano in corso">
+          <p>{errorMessage(open.error)}</p>
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={() => void open.refetch()}
+            disabled={open.isFetching}
+          >
+            Riprova
+          </button>
+        </Alert>
+      )}
       {info && <Alert tone="info">{info}</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
 
@@ -334,7 +407,7 @@ export function BlackjackPage() {
         </div>
       )}
 
-      <section className="panel bj-controls" aria-label="Comandi">
+      <section className="panel bj-controls" aria-label="Comandi" ref={controlsRef}>
         {playing && state ? (
           <>
             <div className="action-row" role="group" aria-label="Mosse disponibili">
@@ -387,13 +460,14 @@ export function BlackjackPage() {
               onChange={setStake}
               limits={LIMITS}
               balance={balance}
-              disabled={busy || !open.data}
+              disabled={busy || open.isPending}
             />
             <button
+              ref={dealButtonRef}
               type="button"
               className="btn btn-primary btn-lg"
               onClick={onDeal}
-              disabled={busy || blocked || !open.data || (balance !== null && stake > balance)}
+              disabled={busy || blocked || open.isPending || (balance !== null && stake > balance)}
             >
               {deal.isPending
                 ? 'Distribuzione…'

@@ -76,7 +76,8 @@ export async function createTestEnv(
 
 export async function truncateAll(pool: Pool): Promise<void> {
   await pool.query(
-    'TRUNCATE users, sessions, wallets, seed_pairs, rounds, ledger, loss_limits RESTART IDENTITY CASCADE',
+    `TRUNCATE users, sessions, wallets, seed_pairs, next_server_seeds, rounds, ledger, loss_limits
+     RESTART IDENTITY CASCADE`,
   );
 }
 

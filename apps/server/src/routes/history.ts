@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { GAME_NAMES_IT } from '@casino/engine';
 import { gameIdSchema, historyQuerySchema, type HistoryPage } from '@casino/shared';
 import type { FastifyInstance } from 'fastify';
@@ -16,6 +17,10 @@ import {
 
 const exportQuerySchema = z.object({ game: gameIdSchema.optional() });
 const EXPORT_BATCH = 500;
+/** Exports per minute per IP (on top of one export at a time per user). */
+const EXPORT_RATE_LIMIT = 5;
+/** Users with an export being streamed by this process. */
+const exportsInFlight = new Set<number>();
 
 const STATUS_IT = { open: 'in corso', settled: 'conclusa' } as const;
 
@@ -104,32 +109,56 @@ export function historyRoutes(ctx: AppContext) {
       };
     });
 
-    app.get('/history/export.csv', async (request, reply) => {
-      const { userId } = authOf(request);
-      const query = parseWith(exportQuerySchema, request.query);
-      const lines = [CSV_HEADER.join(',')];
-      let before: number | null = null;
-      for (;;) {
-        const { rows }: { rows: RoundRow[] } = await pool.query<RoundRow>(
-          `${ROUND_SELECT}
-            WHERE r.user_id = $1 AND ($2::text IS NULL OR r.game = $2)
-              AND ($3::bigint IS NULL OR r.id < $3)
-            ORDER BY r.id DESC
-            LIMIT $4`,
-          [userId, query.game ?? null, before, EXPORT_BATCH],
-        );
-        for (const row of rows) lines.push(csvRow(row));
-        if (rows.length < EXPORT_BATCH) break;
-        before = rows[rows.length - 1]!.id;
-      }
-      const date = ctx.now().toISOString().slice(0, 10);
-      // BOM so that spreadsheet apps detect UTF-8; CRLF line endings per RFC 4180.
-      return reply
-        .type('text/csv; charset=utf-8')
-        .header('content-disposition', `attachment; filename="storico-fiches-${date}.csv"`)
-        .header('cache-control', 'no-store')
-        .send(`\uFEFF${lines.join('\r\n')}\r\n`);
-    });
+    app.get(
+      '/history/export.csv',
+      {
+        // The automatic HEAD route would run the whole export too.
+        exposeHeadRoute: false,
+        config: { rateLimit: { max: EXPORT_RATE_LIMIT, timeWindow: 60_000 } },
+      },
+      async (request, reply) => {
+        const { userId } = authOf(request);
+        const query = parseWith(exportQuerySchema, request.query);
+        if (exportsInFlight.has(userId)) {
+          throw apiError('RATE_LIMITED', 'Esportazione già in corso: attendi che finisca.');
+        }
+
+        // Streamed batch by batch (keyset pagination): memory does not grow with the history.
+        async function* csv(): AsyncGenerator<string | Buffer> {
+          // BOM so that spreadsheet apps detect UTF-8; CRLF line endings per RFC 4180.
+          yield Buffer.from([0xef, 0xbb, 0xbf]);
+          yield `${CSV_HEADER.join(',')}\r\n`;
+          let before: number | null = null;
+          for (;;) {
+            const { rows }: { rows: RoundRow[] } = await pool.query<RoundRow>(
+              `${ROUND_SELECT}
+                WHERE r.user_id = $1 AND ($2::text IS NULL OR r.game = $2)
+                  AND ($3::bigint IS NULL OR r.id < $3)
+                ORDER BY r.id DESC
+                LIMIT $4`,
+              [userId, query.game ?? null, before, EXPORT_BATCH],
+            );
+            if (rows.length > 0) yield `${rows.map(csvRow).join('\r\n')}\r\n`;
+            if (rows.length < EXPORT_BATCH) return;
+            before = rows[rows.length - 1]!.id;
+          }
+        }
+        // Byte mode with a small buffer: the next batch is fetched while the previous one is
+        // sent, but only a couple of batches ever wait for a slow client.
+        const stream = Readable.from(csv(), { objectMode: false, highWaterMark: 256 * 1024 });
+        exportsInFlight.add(userId);
+        // 'close' follows the end, an error or the client going away (Fastify destroys the
+        // stream), always after the generator has stopped querying.
+        stream.once('close', () => exportsInFlight.delete(userId));
+
+        const date = ctx.now().toISOString().slice(0, 10);
+        return reply
+          .type('text/csv; charset=utf-8')
+          .header('content-disposition', `attachment; filename="storico-fiches-${date}.csv"`)
+          .header('cache-control', 'no-store')
+          .send(stream);
+      },
+    );
 
     app.get('/history/:id', async (request) => {
       const { userId } = authOf(request);

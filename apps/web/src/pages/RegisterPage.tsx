@@ -14,7 +14,22 @@ import { Alert } from '../components/Alert.tsx';
 import { Field } from '../components/Field.tsx';
 import { usePageTitle } from '../lib/usePageTitle.ts';
 
-/** Age in whole years on `today` for a YYYY-MM-DD birth date (null when invalid). */
+const ROME_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Rome',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+/** Calendar date [year, month 1-12, day] of `instant` in Italy: the server checks the age there. */
+export function romeDate(instant: Date): [number, number, number] {
+  const parts = ROME_DATE.formatToParts(instant);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((p) => p.type === type)?.value);
+  return [part('year'), part('month'), part('day')];
+}
+
+/** Age in whole years on `today` (Italian date) for a YYYY-MM-DD birth date (null when invalid). */
 export function ageOn(birthDate: string, today: Date = new Date()): number | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate);
   if (!match) return null;
@@ -25,15 +40,20 @@ export function ageOn(birthDate: string, today: Date = new Date()): number | nul
   if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) {
     return null;
   }
-  let age = today.getFullYear() - y;
-  const month = today.getMonth() + 1;
-  if (month < m || (month === m && today.getDate() < d)) age -= 1;
+  const [ty, tm, td] = romeDate(today);
+  let age = ty - y;
+  if (tm < m || (tm === m && td < d)) age -= 1;
   return age;
 }
 
-function isoDate(date: Date): string {
+/** Latest birth date (YYYY-MM-DD) that is of age on `today`, Italian date. */
+export function maxBirthDate(today: Date = new Date()): string {
+  const [ty, tm, td] = romeDate(today);
+  const year = ty - MIN_AGE;
+  // 29 February today: that day does not exist MIN_AGE years earlier, the 28th does.
+  const lastDay = new Date(Date.UTC(year, tm, 0)).getUTCDate();
   const pad = (n: number) => n.toString().padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return `${year}-${pad(tm)}-${pad(Math.min(td, lastDay))}`;
 }
 
 type Errors = Partial<Record<'username' | 'password' | 'confirm' | 'birthDate' | 'terms', string>>;
@@ -55,11 +75,7 @@ export function RegisterPage() {
     return <Navigate to="/" replace />;
   }
 
-  const maxBirth = (() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() - MIN_AGE);
-    return isoDate(d);
-  })();
+  const maxBirth = maxBirthDate();
 
   const validate = (): Errors => {
     const next: Errors = {};

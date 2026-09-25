@@ -134,3 +134,25 @@ jobs:
           done
           docker logs casino
           exit 1
+
+      - name: Image contents (bundle only)
+        run: |
+          # Migrations ship once, in dist/migrations; the @casino/* sources are inlined in the bundle.
+          docker run --rm --entrypoint sh casinoonline:ci -c \
+            'test -f dist/migrations/001_init.sql && test ! -e migrations &&
+             test ! -e node_modules/@casino'
+
+      - name: Docker Compose (password with URL-reserved characters)
+        env:
+          POSTGRES_PASSWORD: 'Zq8/k3+Xw=#?%'
+        run: |
+          docker rm -f casino
+          docker tag casinoonline:ci casinoonline:latest
+          if docker compose up -d --no-build --wait --wait-timeout 180 &&
+            curl -fsS http://localhost:3000/api/health | grep -q '"db":true'; then
+            echo "OK"
+          else
+            docker compose logs
+            exit 1
+          fi
+          docker compose down -v

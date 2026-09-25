@@ -8,7 +8,7 @@ import {
 } from '@casino/engine';
 import { TABLE_LIMITS, type SlotSpinResponse } from '@casino/shared';
 import { spinSlot } from '../../api/games.ts';
-import { errorMessage } from '../../api/errors.ts';
+import { betErrorMessage } from '../../api/errors.ts';
 import {
   retryOnNetworkError,
   useBalance,
@@ -16,7 +16,7 @@ import {
   useSelfExclusionUntil,
   useSetBalance,
 } from '../../api/hooks.ts';
-import { newIdempotencyKey } from '../../api/idempotency.ts';
+import { useBetIdempotencyKey } from '../../api/idempotency.ts';
 import { Alert } from '../../components/Alert.tsx';
 import { GameHeader } from '../../components/GameHeader.tsx';
 import { StakeSelector } from '../../components/StakeSelector.tsx';
@@ -55,16 +55,49 @@ export function SlotPage() {
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const stoppedReels = useRef(new Set<number>());
-  const pendingBalance = useRef<number | null>(null);
+  const spinButtonRef = useRef<HTMLButtonElement>(null);
+  const spinKey = useBetIdempotencyKey();
+  // Spin settled by the server but not shown yet (request pending or reels still turning).
+  const unrevealed = useRef<SlotSpinResponse | null>(null);
+  const mounted = useRef(false);
+  // Synchronous double-click guard: `busy` only changes on the next render.
+  const inFlight = useRef(false);
+  // Give focus back to the spin button after the spin (it is disabled meanwhile).
+  const refocus = useRef(false);
 
-  const mutation = useMutation({ mutationFn: spinSlot, retry: retryOnNetworkError });
+  // The spin is over for the player even if they never see it: balance, history, statistics
+  // and limits are brought up to date.
+  const flushUnrevealed = useCallback(() => {
+    const response = unrevealed.current;
+    if (!response) return;
+    unrevealed.current = null;
+    setBalance(response.balance);
+    invalidate();
+  }, [setBalance, invalidate]);
 
-  useEffect(
-    () => () => {
-      if (pendingBalance.current !== null) setBalance(pendingBalance.current);
+  const mutation = useMutation({
+    mutationFn: spinSlot,
+    retry: retryOnNetworkError,
+    // These run even after the page unmounted (the per-call callbacks of mutate() do not).
+    onSuccess: (response) => {
+      unrevealed.current = response;
+      spinKey.settle();
+      if (!mounted.current) flushUnrevealed();
     },
-    [setBalance],
-  );
+    onError: (err) => spinKey.settle(err),
+    onSettled: () => {
+      inFlight.current = false;
+    },
+  });
+
+  // Leaving while the request is pending or the reels turn: apply the result anyway.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      flushUnrevealed();
+    };
+  }, [flushUnrevealed]);
 
   const busy = mutation.isPending || !revealed;
   const blocked = Boolean(excludedUntil);
@@ -72,24 +105,25 @@ export function SlotPage() {
   const settlement = revealed && spin ? spin.response.settlement : null;
 
   const onSpin = () => {
-    if (busy || blocked) return;
+    if (inFlight.current || busy || blocked) return;
+    inFlight.current = true;
+    const active = document.activeElement;
+    refocus.current = !active || active === document.body || active === spinButtonRef.current;
     setError(null);
+    // Same stake after an uncertain failure = same key: the server never takes it twice.
     mutation.mutate(
-      { amount: stake, idempotencyKey: newIdempotencyKey() },
+      { amount: stake, idempotencyKey: spinKey.keyFor(String(stake)) },
       {
         onSuccess: (response) => {
-          pendingBalance.current = response.balance;
+          // Stake is taken now; winnings are credited when the reels stop.
           setBalance(response.balance - response.settlement.win);
           stoppedReels.current = new Set();
           setRevealed(false);
           setAnnouncement('I rulli girano…');
           setSpin((prev) => ({ id: (prev?.id ?? 0) + 1, response }));
         },
-        onError: (err) => {
-          const msg = errorMessage(err);
-          setError(msg);
-          setAnnouncement(msg);
-        },
+        // The error alert (role="alert") announces itself.
+        onError: (err) => setError(betErrorMessage(err)),
       },
     );
   };
@@ -99,17 +133,27 @@ export function SlotPage() {
       stoppedReels.current.add(reel);
       if (stoppedReels.current.size < 3 || !spin) return;
       const s = spin.response.settlement;
-      pendingBalance.current = null;
-      setBalance(spin.response.balance);
+      if (unrevealed.current === spin.response) flushUnrevealed();
       setRevealed(true);
-      invalidate();
       const result = s.kind
         ? `${WIN_NAMES_IT[s.kind]}: rientrano ${chipsLabel(s.win)} (puntata ${chipsLabel(s.bet)}).`
         : `Nessuna combinazione vincente. Puntata ${chipsLabel(s.bet)}.`;
       setAnnouncement(`Linea: ${describeLine(s)}. ${result}`);
     },
-    [spin, setBalance, invalidate],
+    [spin, flushUnrevealed],
   );
+
+  // Keyboard users keep their place: once the spin is over (or failed), focus returns to the
+  // spin button.
+  useEffect(() => {
+    if (busy || !refocus.current) return;
+    refocus.current = false;
+    // Only when focus was lost (the pressed button was disabled): never steal it.
+    const active = document.activeElement as HTMLButtonElement | null;
+    if (active && active !== document.body && active.disabled !== true) return;
+    const spinButton = spinButtonRef.current;
+    if (spinButton && !spinButton.disabled) spinButton.focus();
+  }, [busy]);
 
   const net = settlement ? settlement.win - settlement.bet : 0;
 
@@ -173,6 +217,7 @@ export function SlotPage() {
               presets={[1, 2, 5, 10, 25, 50]}
             />
             <button
+              ref={spinButtonRef}
               type="button"
               className="btn btn-primary btn-lg"
               onClick={onSpin}
@@ -191,45 +236,47 @@ export function SlotPage() {
           <h2 id="slot-paytable-title" className="panel-title">
             Tabella dei pagamenti
           </h2>
-          <table className="data-table paytable">
-            <caption className="small muted">
-              Valori restituiti per una puntata di {chipsLabel(stake)} (puntata inclusa), solo sulla
-              linea centrale.
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">Combinazione</th>
-                <th scope="col" className="num">
-                  Moltiplicatore
-                </th>
-                <th scope="col" className="num">
-                  Rientro
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {PAY_ORDER.map((kind) => (
-                <tr
-                  key={kind}
-                  className={settlement?.kind === kind ? 'row-win' : ''}
-                  aria-current={settlement?.kind === kind ? 'true' : undefined}
-                >
-                  <th scope="row">
-                    <span className="paytable-name">
-                      <span className="paytable-symbols" aria-hidden="true">
-                        {WIN_SYMBOLS[kind].map((s, i) => (
-                          <SlotSymbolIcon key={i} symbol={s} className="slot-symbol-small" />
-                        ))}
-                      </span>
-                      <span>{WIN_NAMES_IT[kind]}</span>
-                    </span>
+          <div className="table-scroll">
+            <table className="data-table paytable">
+              <caption className="small muted">
+                Valori restituiti per una puntata di {chipsLabel(stake)} (puntata inclusa), solo
+                sulla linea centrale.
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Combinazione</th>
+                  <th scope="col" className="num">
+                    Moltiplicatore
                   </th>
-                  <td className="num">×{SLOT_PAYTABLE[kind]}</td>
-                  <td className="num">{chipsLabel(stake * SLOT_PAYTABLE[kind])}</td>
+                  <th scope="col" className="num">
+                    Rientro
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {PAY_ORDER.map((kind) => (
+                  <tr
+                    key={kind}
+                    className={settlement?.kind === kind ? 'row-win' : ''}
+                    aria-current={settlement?.kind === kind ? 'true' : undefined}
+                  >
+                    <th scope="row">
+                      <span className="paytable-name">
+                        <span className="paytable-symbols" aria-hidden="true">
+                          {WIN_SYMBOLS[kind].map((s, i) => (
+                            <SlotSymbolIcon key={i} symbol={s} className="slot-symbol-small" />
+                          ))}
+                        </span>
+                        <span>{WIN_NAMES_IT[kind]}</span>
+                      </span>
+                    </th>
+                    <td className="num">×{SLOT_PAYTABLE[kind]}</td>
+                    <td className="num">{chipsLabel(stake * SLOT_PAYTABLE[kind])}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <dl className="summary-list compact">
             <div>
               <dt>RTP esatto</dt>

@@ -24,7 +24,7 @@ limiti, pausa e promemoria. Le regole di dettaglio sono in `docs/SPEC.md` §5; i
 - Ogni nuova puntata, e ogni raddoppio o divisione nel blackjack, di importo `s` è **rifiutata** se
   `usata + s > limite` per almeno una finestra: la puntata è considerata già persa (approccio
   prudente). Errore `403 RG_LOSS_LIMIT` con la finestra più restrittiva e quanto si può ancora
-  puntare (`details: { period, remaining }`).
+  puntare, arrotondato per difetto alle fiches intere (`details: { period, remaining }`).
 - **Abbassare** un limite, o impostarlo dove non c'era, ha **effetto immediato**.
 - **Alzare o rimuovere** un limite diventa una modifica **in attesa** che entra in vigore dopo
   **24 ore**; fino ad allora resta valido il limite precedente. Una nuova richiesta di aumento
@@ -50,9 +50,12 @@ limiti, pausa e promemoria. Le regole di dettaglio sono in `docs/SPEC.md` §5; i
 - Ogni 15, 30 o 60 minuti di sessione (predefinito **30**, modificabile) compare una **finestra
   bloccante** con il tempo di gioco, il numero di partite concluse e il **risultato netto** della
   sessione (dati da `GET /api/rg`).
-- Le scelte sono **"Continua a giocare"** o **"Esci"** (disconnessione). La sessione inizia
-  all'accesso. Il promemoria già confermato è ricordato per sessione, quindi ricaricare la pagina
-  non fa saltare un promemoria dovuto.
+- La finestra ricorda anche il **Telefono Verde** e porta alla pagina Gioco responsabile (limiti,
+  pausa, frequenza del promemoria).
+- Le scelte sono **"Continua a giocare"** o **"Esci"** (disconnessione), con lo stesso peso visivo
+  e senza focus iniziale su nessuna delle due: un Invio o uno Spazio premuti per sbaglio non chiudono
+  il promemoria senza leggerlo. La sessione inizia all'accesso. Il promemoria già confermato è
+  ricordato per sessione, quindi ricaricare la pagina non fa saltare un promemoria dovuto.
 
 ### Ricomincia (reset del saldo)
 

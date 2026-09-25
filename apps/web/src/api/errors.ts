@@ -35,6 +35,9 @@ const MESSAGES: Record<ErrorCode | ClientErrorCode, string> = {
   BAD_RESPONSE: 'Risposta del server non valida. Riprova tra poco.',
 };
 
+/** Generic text for unexpected failures: raw technical messages are never shown. */
+export const GENERIC_ERROR_MESSAGE = MESSAGES.INTERNAL;
+
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
 }
@@ -88,4 +91,24 @@ export function errorMessage(err: unknown): string {
 
 export function errorCode(err: unknown): ErrorCode | ClientErrorCode | null {
   return err instanceof ApiError ? err.code : null;
+}
+
+/**
+ * No valid answer arrived (network failure, unreadable body, 5xx): the server may or may not
+ * have applied the request, so the local view of balance and history can be stale.
+ */
+export function isUncertainOutcome(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    (err.code === 'NETWORK_ERROR' || err.code === 'BAD_RESPONSE' || err.status >= 500)
+  );
+}
+
+/** Shown on a table when a bet request ended without a definitive answer. */
+export const UNCERTAIN_BET_MESSAGE =
+  'Esito incerto: la puntata potrebbe essere stata registrata. Controlla lo storico; se riprovi con la stessa puntata non verrà addebitata due volte.';
+
+/** Error text for a bet request: uncertain outcomes explain that a retry is safe. */
+export function betErrorMessage(err: unknown): string {
+  return isUncertainOutcome(err) ? UNCERTAIN_BET_MESSAGE : errorMessage(err);
 }

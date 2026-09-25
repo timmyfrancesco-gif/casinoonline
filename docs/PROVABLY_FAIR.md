@@ -10,8 +10,10 @@ calcolato in modo **deterministico** da tre valori, più le scelte del giocatore
 | `nonce`      | contatore 0, 1, 2, … per ogni partita della coppia | sempre (ogni partita riporta il proprio nonce)  |
 
 Prima di giocare vedi l'**impronta** `serverSeedHash = SHA-256(serverSeed)`: è l'impegno del server.
-Quando ruoti la coppia, il `serverSeed` viene rivelato; puoi controllare che il suo SHA-256
-corrisponda all'impronta vista prima e ricalcolare **tutte** le partite giocate con quella coppia.
+Il server seed di ogni nuova coppia è generato **in anticipo**: ne vedi l'impronta
+(`next.serverSeedHash`) prima di scegliere il client seed con cui userai quella coppia. Quando ruoti
+la coppia, il `serverSeed` viene rivelato; puoi controllare che il suo SHA-256 corrisponda
+all'impronta vista prima e ricalcolare **tutte** le partite giocate con quella coppia.
 
 Il codice di riferimento è [`packages/engine/src/fair/rng.ts`](../packages/engine/src/fair/rng.ts)
 (generatore) e [`packages/engine/src/verify.ts`](../packages/engine/src/verify.ts) (`verifyRound()`),
@@ -137,32 +139,57 @@ seed, nonce e dalla maschera delle carte tenute (`verifyInput.held`).
 ## 3. Ciclo di vita dei seed
 
 1. **Registrazione**: il server crea la prima coppia attiva, con `serverSeed` = 32 byte da
-   `crypto.randomBytes` in esadecimale e `clientSeed` = 16 byte casuali in esadecimale; il prossimo
-   nonce è 0.
+   `crypto.randomBytes` in esadecimale e `clientSeed` = 16 byte casuali in esadecimale (il prossimo
+   nonce è 0), e genera subito anche il **prossimo server seed** (altri 32 byte casuali), di cui
+   mostra solo l'impronta. Per gli account creati prima della migrazione `002_next_server_seed` il
+   primo prossimo seed è generato dalla migrazione (SHA-256 di due UUID casuali di PostgreSQL, 244
+   bit di casualità).
 2. **Ogni partita**, nella stessa transazione della puntata: la coppia attiva viene bloccata, la
    partita riceve `nonce = next_nonce` e il contatore avanza di 1. Il database impone l'unicità di
    `(coppia, nonce)`: due partite non possono mai condividere lo stesso flusso casuale.
 3. Finché la coppia è attiva, l'API non restituisce mai il server seed: ogni partita riporta
    `fairness = { seedPairId, serverSeedHash, clientSeed, nonce, serverSeed: null }`.
 4. **Rotazione** (`POST /api/fairness/rotate`, dal Profilo): la coppia attiva viene disattivata e
-   rivelata (`revealed_at`), e ne nasce una nuova con il client seed indicato (o casuale) e nonce 0.
-   La rotazione è **rifiutata se c'è una mano in corso** (`409 SEED_ROTATION_BLOCKED`): rivelare il
-   seed permetterebbe di calcolare le carte ancora coperte.
-5. `GET /api/fairness` mostra la coppia attiva (impronta, client seed, prossimo nonce) e le ultime
-   20 coppie rivelate con `serverSeed` e numero di partite giocate (`roundsPlayed`: nonce da 0 a
-   `roundsPlayed − 1`). Lo storico e l'export CSV riportano per ogni partita seed, impronta e nonce.
+   rivelata (`revealed_at`), e ne nasce una nuova con nonce 0, il client seed indicato e come server
+   seed **il prossimo server seed già impegnato**: l'impronta della nuova coppia attiva è quella
+   mostrata prima come `next.serverSeedHash`. Subito dopo il server genera un nuovo prossimo server
+   seed per la rotazione successiva.
+   - Il Profilo sceglie sempre il client seed nel browser (quello che scrivi, oppure 16 byte casuali
+     generati con `crypto.getRandomValues`) e invia anche `nextServerSeedHash`, l'impronta che hai
+     visto. Se nel frattempo i seed sono stati ruotati altrove (es. da un'altra scheda), il server
+     risponde `409 CONFLICT` e non ruota: la nuova coppia usa sempre il seed che avevi visto
+     impegnato. Dopo la rotazione il Profilo controlla che la nuova impronta attiva coincida con
+     quella annunciata.
+   - La rotazione è **rifiutata se c'è una mano in corso** (`409 SEED_ROTATION_BLOCKED`): rivelare
+     il seed permetterebbe di calcolare le carte ancora coperte.
+5. `GET /api/fairness` mostra la coppia attiva (impronta, client seed, prossimo nonce), l'impronta
+   del prossimo server seed (`next.serverSeedHash`) e le ultime 20 coppie rivelate con `serverSeed`
+   e numero di partite giocate (`roundsPlayed`: nonce da 0 a `roundsPlayed − 1`). Lo storico e
+   l'export CSV riportano per ogni partita seed, impronta e nonce.
+6. Il browser **conserva** (in `localStorage`, al massimo 200 coppie) l'impronta di ogni coppia che
+   vede prima della rivelazione: quella della coppia attiva, quella riportata da ogni partita e,
+   alla rotazione, il `next.serverSeedHash` annunciato. La pagina Verifica confronta il seed
+   rivelato con questa copia, non con l'impronta che il server invia insieme al seed.
 
 ### Garanzie e limiti
 
 - Il server si impegna sul `serverSeed` (ne mostra l'impronta) **prima** di ogni partita giocata con
   quella coppia, e il nonce è registrato: non può cambiare un esito dopo averlo visto, né scegliere a
   posteriori quale nonce usare.
-- Il nuovo server seed viene generato nella stessa richiesta di rotazione che riceve il nuovo client
-  seed, e la prima coppia (alla registrazione) ha un client seed scelto dal server. In teoria un
-  server disonesto potrebbe quindi provare molti server seed per un client seed noto e tenere il più
-  favorevole al banco. Uno schema più forte mostrerebbe l'impronta del **prossimo** server seed
-  prima che il giocatore scelga il client seed; è un possibile miglioramento futuro. Dato che le
-  fiches non hanno valore, il rischio pratico è nullo, ma lo dichiariamo per trasparenza.
+- Il server seed di ogni coppia nata da una rotazione è fissato **prima** che il giocatore scelga il
+  client seed (ne è stata mostrata l'impronta come `next.serverSeedHash`): il server non può provare
+  molti server seed per un client seed ormai noto e tenere il più favorevole al banco.
+- Limiti che restano:
+  - la **prima coppia**, creata alla registrazione, ha anche il client seed scelto dal server. Per
+    la garanzia completa ruota i seed dal Profilo prima di giocare;
+  - chi usa l'API direttamente e ruota senza `clientSeed` riceve un client seed scelto dal server;
+    senza `nextServerSeedHash` la rotazione non controlla quale impronta avevi visto;
+  - la prova che il seed rivelato è quello promesso vale se l'impronta è stata conservata prima
+    della rivelazione: dal browser (la pagina Verifica indica se il confronto usa la copia locale o
+    solo l'impronta fornita ora dal server, e segnala in rosso un'impronta diversa da quella
+    registrata) oppure annotata da te.
+- Dato che le fiches non hanno valore, il rischio pratico è comunque nullo; questi limiti sono
+  dichiarati per trasparenza.
 
 ## 4. Come verificare
 
@@ -170,8 +197,10 @@ seed, nonce e dalla maschera delle carte tenute (`verifyInput.held`).
 
 **Storico** → apri una partita → **Verifica** (pagina `/verifica?round=<id>`). Se il seed non è ancora
 rivelato, ruota la coppia dal **Profilo** e riapri la verifica. La pagina ricalcola la partita nel
-browser con `verifyRound()` e confronta esito e pagamento con quanto registrato dal server. Puoi
-anche compilare il modulo a mano (gioco, seed, nonce, puntate/mosse).
+browser con `verifyRound()`, controlla il seed rivelato contro l'impronta conservata dal browser
+prima della rivelazione e confronta esito, puntata e pagamento con quanto registrato dal server.
+Puoi anche compilare il modulo a mano (gioco, seed, nonce, puntate/mosse): se cambi i dati della
+partita registrata il confronto con l'esito registrato non si applica.
 
 ### Con uno script indipendente (solo `node:crypto`)
 

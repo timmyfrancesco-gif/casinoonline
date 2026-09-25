@@ -11,12 +11,15 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { authOf } from '../auth/hooks.ts';
 import type { AppContext } from '../context.ts';
-import { withTransaction } from '../db/tx.ts';
+import { withUserTransaction } from '../db/tx.ts';
 import { apiError, parseWith } from '../lib/errors.ts';
 import { getFairness, rotateSeedPair } from '../services/fairness.ts';
 import { extendSelfExclusion, rgStatus, setLossLimit, setRealityCheck } from '../services/rg.ts';
 import { resetCount, settledStats } from '../services/stats.ts';
 import { applyMovement, getBalance, lockUser } from '../services/wallet.ts';
+
+/** GET /stats calls per minute per IP. */
+export const STATS_RATE_LIMIT = 30;
 
 /** Wallet, provably-fair seeds, responsible gaming and statistics (authenticated). */
 export function playerRoutes(ctx: AppContext) {
@@ -29,7 +32,7 @@ export function playerRoutes(ctx: AppContext) {
 
     app.post('/wallet/reset', async (request): Promise<WalletResponse> => {
       const { userId } = authOf(request);
-      const balance = await withTransaction(pool, async (client) => {
+      const balance = await withUserTransaction(pool, userId, async (client) => {
         await lockUser(client, userId);
         const current = await getBalance(client, userId);
         const open = await client.query(
@@ -61,7 +64,7 @@ export function playerRoutes(ctx: AppContext) {
     app.post('/fairness/rotate', async (request) => {
       const { userId } = authOf(request);
       const body = parseWith(rotateSeedRequestSchema, request.body ?? {});
-      return withTransaction(pool, async (client) => {
+      return withUserTransaction(pool, userId, async (client) => {
         await lockUser(client, userId);
         const open = await client.query<{ id: number }>(
           `SELECT id FROM rounds WHERE user_id = $1 AND status = 'open' ORDER BY id LIMIT 1`,
@@ -70,7 +73,7 @@ export function playerRoutes(ctx: AppContext) {
         if (open.rows[0]) {
           throw apiError('SEED_ROTATION_BLOCKED', undefined, { roundId: String(open.rows[0].id) });
         }
-        await rotateSeedPair(client, userId, body.clientSeed, ctx.now());
+        await rotateSeedPair(client, userId, body.clientSeed, body.nextServerSeedHash, ctx.now());
         return getFairness(client, userId);
       });
     });
@@ -83,7 +86,7 @@ export function playerRoutes(ctx: AppContext) {
     app.put('/rg/loss-limit', async (request) => {
       const auth = authOf(request);
       const body = parseWith(setLossLimitRequestSchema, request.body);
-      return withTransaction(pool, async (client) => {
+      return withUserTransaction(pool, auth.userId, async (client) => {
         const now = ctx.now();
         await lockUser(client, auth.userId);
         await setLossLimit(client, auth.userId, body.period, body.value, now);
@@ -94,7 +97,7 @@ export function playerRoutes(ctx: AppContext) {
     app.post('/rg/self-exclusion', async (request) => {
       const auth = authOf(request);
       const body = parseWith(selfExclusionRequestSchema, request.body);
-      return withTransaction(pool, async (client) => {
+      return withUserTransaction(pool, auth.userId, async (client) => {
         const now = ctx.now();
         await lockUser(client, auth.userId);
         await extendSelfExclusion(client, auth.userId, body.duration, now);
@@ -109,16 +112,21 @@ export function playerRoutes(ctx: AppContext) {
       return rgStatus(pool, auth.userId, auth.sessionStartedAt, ctx.now());
     });
 
-    app.get('/stats', async (request): Promise<StatsResponse> => {
-      const auth = authOf(request);
-      const lifetime = await settledStats(pool, auth.userId);
-      const session = await settledStats(pool, auth.userId, auth.sessionStartedAt);
-      return {
-        lifetime: lifetime.total,
-        byGame: lifetime.byGame,
-        session: { ...session.total, startedAt: auth.sessionStartedAt.toISOString() },
-        resets: await resetCount(pool, auth.userId),
-      };
-    });
+    // Each call aggregates the whole round history of the user: cheap for players, not for floods.
+    app.get(
+      '/stats',
+      { config: { rateLimit: { max: STATS_RATE_LIMIT, timeWindow: 60_000 } } },
+      async (request): Promise<StatsResponse> => {
+        const auth = authOf(request);
+        const lifetime = await settledStats(pool, auth.userId);
+        const session = await settledStats(pool, auth.userId, auth.sessionStartedAt);
+        return {
+          lifetime: lifetime.total,
+          byGame: lifetime.byGame,
+          session: { ...session.total, startedAt: auth.sessionStartedAt.toISOString() },
+          resets: await resetCount(pool, auth.userId),
+        };
+      },
+    );
   };
 }

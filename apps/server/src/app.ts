@@ -18,6 +18,12 @@ import { historyRoutes } from './routes/history.ts';
 import { playerRoutes } from './routes/player.ts';
 
 export const BODY_LIMIT = 64 * 1024;
+/**
+ * Time allowed to receive a whole request (Fastify's default 0 disables it, and the server may be
+ * exposed without a reverse proxy): a client trickling a body cannot hold the socket forever.
+ * It does not cover sending the response (e.g. a long CSV export).
+ */
+export const REQUEST_TIMEOUT_MS = 30_000;
 export const DEFAULT_RATE_LIMITS: RateLimits = { global: 300, auth: 10 };
 
 export interface BuildAppOptions {
@@ -85,6 +91,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     trustProxy:
       typeof config.trustProxy === 'number' ? trustHops(config.trustProxy) : config.trustProxy,
     bodyLimit: BODY_LIMIT,
+    requestTimeout: REQUEST_TIMEOUT_MS,
     return503OnClosing: true,
   });
 
@@ -141,6 +148,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   await app.register(
     async (api) => {
+      // API responses carry per-user data: no browser, proxy or CDN may store them.
+      api.addHook('onSend', async (_request, reply, payload) => {
+        if (!reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store');
+        return payload;
+      });
       api.get('/health', async (): Promise<HealthResponse> => {
         let db = false;
         try {

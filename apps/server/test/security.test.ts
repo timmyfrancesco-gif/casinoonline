@@ -2,9 +2,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { buildApp } from '../src/app.ts';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+import { buildApp, REQUEST_TIMEOUT_MS } from '../src/app.ts';
 import { loadConfig } from '../src/config.ts';
 import { createPool } from '../src/db/pool.ts';
+import { errorHandler } from '../src/lib/errors.ts';
 import {
   APP_ORIGIN,
   client,
@@ -144,6 +146,39 @@ describe('errors', () => {
     await pool.end();
   });
 
+  it('logs deadlocks and serialization failures mapped to CONFLICT', () => {
+    const run = (error: unknown) => {
+      const logged: { level: string; obj: unknown }[] = [];
+      const request = {
+        log: {
+          warn: (obj: unknown) => logged.push({ level: 'warn', obj }),
+          error: (obj: unknown) => logged.push({ level: 'error', obj }),
+        },
+      };
+      let status = 0;
+      const reply: { status: (code: number) => unknown; type: () => unknown; send: () => unknown } =
+        {
+          status: (code) => {
+            status = code;
+            return reply;
+          },
+          type: () => reply,
+          send: () => reply,
+        };
+      errorHandler(error, request as unknown as FastifyRequest, reply as unknown as FastifyReply);
+      return { logged, status };
+    };
+    for (const code of ['40P01', '40001']) {
+      const error = Object.assign(new Error('deadlock detected'), { code, severity: 'ERROR' });
+      const { logged, status } = run(error);
+      expect(status).toBe(409);
+      expect(logged).toEqual([{ level: 'warn', obj: { err: error, sqlState: code } }]);
+    }
+    // A unique violation is the normal outcome of a lost race: not logged.
+    const unique = run(Object.assign(new Error('dup'), { code: '23505', severity: 'ERROR' }));
+    expect(unique).toEqual({ logged: [], status: 409 });
+  });
+
   it('validates query strings', async () => {
     const p = await registerPlayer(env.app);
     expectError(await p.get('/api/history?limit=1000'), 400, 'VALIDATION_ERROR');
@@ -175,6 +210,24 @@ describe('security headers', () => {
     expect(csp).not.toContain('unsafe-inline');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['x-frame-options']).toBeDefined();
+  });
+
+  it('forbids caching of every API response', async () => {
+    const p = await registerPlayer(env.app);
+    for (const url of ['/api/auth/me', '/api/wallet', '/api/fairness', '/api/health']) {
+      const res = await p.get(url);
+      expect(res.statusCode, url).toBe(200);
+      expect(res.headers['cache-control'], url).toBe('no-store');
+    }
+    // Errors too (e.g. after logout).
+    const anon = await client(env.app).get('/api/wallet');
+    expect(anon.statusCode).toBe(401);
+    expect(anon.headers['cache-control']).toBe('no-store');
+  });
+
+  it('times out requests whose body never arrives', () => {
+    expect(env.app.server.requestTimeout).toBe(REQUEST_TIMEOUT_MS);
+    expect(REQUEST_TIMEOUT_MS).toBeGreaterThan(0);
   });
 });
 

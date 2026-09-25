@@ -45,7 +45,8 @@ export default defineConfig({
     env: { E2E_PORT: port },
     reuseExistingServer: false,
     timeout: 60_000,
-    stdout: 'ignore',
+    // pino logs to stdout: keep it, so server errors (E2E_LOG_LEVEL, default warn) are shown.
+    stdout: 'pipe',
     stderr: 'pipe',
   },
 });

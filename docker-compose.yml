@@ -9,6 +9,12 @@
 #
 #   POSTGRES_PASSWORD      database password (the only secret). Default "casino" is for local
 #                          use only: the database port is not published outside this network.
+#                          Any character is fine (the app gets it through PGPASSWORD, not inside
+#                          a URL). It is applied only when the pgdata volume is first created:
+#                          to change it later, first run (then update the variable)
+#                            docker compose exec db psql -U casino \
+#                              -c "ALTER USER casino PASSWORD '...'"
+#                          or recreate the volume with `docker compose down -v` (deletes the data).
 #   CASINO_ORIGIN          public origin(s) of the site, comma separated (CSRF Origin check)
 #   CASINO_COOKIE_SECURE   true when the site is served over HTTPS (Secure cookie, HSTS)
 #   CASINO_TRUST_PROXY     1 (hop count) behind one reverse proxy, false when exposed directly
@@ -39,7 +45,10 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://casino:${POSTGRES_PASSWORD:-casino}@db:5432/casino
+      # No password in the URL: a raw secret with / + # ? would make it invalid. pg reads
+      # PGPASSWORD when the URL has none.
+      DATABASE_URL: postgres://casino@db:5432/casino
+      PGPASSWORD: ${POSTGRES_PASSWORD:-casino}
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: '3000'

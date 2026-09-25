@@ -146,7 +146,15 @@ export function useResetWallet() {
 // ---------------------------------------------------------------------------
 
 export function useRg(enabled = true) {
-  return useQuery({ queryKey: queryKeys.rg, queryFn: rg.getRg, enabled, staleTime: 30_000 });
+  return useQuery({
+    queryKey: queryKeys.rg,
+    queryFn: rg.getRg,
+    enabled,
+    staleTime: 30_000,
+    // A pause set in another tab must show up here too. (Not for `me`: a refetch during a
+    // roulette or slot animation would reveal the final balance.)
+    refetchOnWindowFocus: true,
+  });
 }
 
 function useRgMutation<T>(fn: (body: T) => Promise<RgStatus>) {
@@ -198,6 +206,12 @@ export function useRotateSeeds() {
       // Rounds of the revealed pair now expose their server seed.
       void client.invalidateQueries({ queryKey: ['round'] });
       void client.invalidateQueries({ queryKey: queryKeys.historyAll });
+    },
+    onError: (err) => {
+      // Rotated elsewhere meanwhile: show the current next-seed hash before any retry.
+      if (isApiError(err) && err.code === 'CONFLICT') {
+        void client.invalidateQueries({ queryKey: queryKeys.fairness });
+      }
     },
   });
 }

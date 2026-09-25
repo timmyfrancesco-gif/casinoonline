@@ -7,6 +7,7 @@ import type {
 } from '@casino/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { csvField } from '../src/routes/history.ts';
+import { STATS_RATE_LIMIT } from '../src/routes/player.ts';
 import {
   CHIP,
   createTestEnv,
@@ -169,6 +170,83 @@ describe('history', () => {
     }
   });
 
+  it('streams exports longer than one batch', async () => {
+    const p = await registerPlayer(env.app);
+    const spin = await p.post('/api/games/slot/spin', { amount: CHIP, idempotencyKey: key() });
+    // 999 copies of the round: 1000 rows = two full batches of 500, then an empty one.
+    await env.pool.query(
+      `INSERT INTO rounds (user_id, game, status, seed_pair_id, nonce, stake, payout, input, state,
+                           idempotency_key, request_hash, created_at, settled_at)
+       SELECT user_id, game, status, seed_pair_id, nonce + g, stake, payout, input, state,
+              gen_random_uuid(), request_hash, created_at, settled_at
+         FROM rounds, generate_series(1, 999) AS g
+        WHERE id = $1`,
+      [Number(spin.json().round.id)],
+    );
+    const res = await p.get('/api/history/export.csv');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.startsWith('\uFEFFid,gioco,')).toBe(true);
+    expect(res.body.endsWith('\r\n')).toBe(true);
+    expect(res.body).not.toContain('\r\n\r\n');
+    const rows = parseCsv(res.body.slice(1));
+    expect(rows).toHaveLength(1001);
+    const { rows: ids } = await env.pool.query<{ id: number }>(
+      'SELECT id FROM rounds WHERE user_id = $1 ORDER BY id DESC',
+      [p.userId],
+    );
+    expect(rows.slice(1).map((r) => Number(r[0]))).toEqual(ids.map((r) => r.id));
+    for (const r of rows.slice(1)) expect(r).toHaveLength(14);
+  });
+
+  it('allows one export at a time per user and 5 per minute per IP', async () => {
+    const limited = await createTestEnv();
+    const blocker = await limited.pool.connect();
+    try {
+      const p = await registerPlayer(limited.app);
+      const other = await registerPlayer(limited.app);
+      await p.post('/api/games/slot/spin', { amount: CHIP, idempotencyKey: key() });
+      // No HEAD variant running the whole export.
+      const head = await limited.app.inject({
+        method: 'HEAD',
+        url: '/api/history/export.csv',
+        headers: { cookie: p.cookie! },
+      });
+      expect(head.statusCode).toBe(404);
+      expect(head.headers['content-type']).not.toContain('text/csv');
+
+      // Hold the export on its first query.
+      await blocker.query('BEGIN');
+      await blocker.query('LOCK TABLE rounds IN ACCESS EXCLUSIVE MODE');
+      const first = p.get('/api/history/export.csv');
+      const otherUser = other.get('/api/history/export.csv');
+      for (let waiting = 0; waiting < 2;) {
+        await new Promise((r) => setTimeout(r, 10));
+        const { rows } = await limited.pool.query<{ n: number }>(
+          `SELECT COUNT(*) AS n FROM pg_locks WHERE NOT granted AND relation = 'rounds'::regclass`,
+        );
+        waiting = rows[0]!.n;
+      }
+      const second = await p.get('/api/history/export.csv');
+      const err = expectError(second, 429, 'RATE_LIMITED');
+      expect(err.message).toBe('Esportazione già in corso: attendi che finisca.');
+      await blocker.query('COMMIT');
+
+      const done = await first;
+      expect(done.statusCode).toBe(200);
+      expect(parseCsv(done.body.slice(1))).toHaveLength(2);
+      expect((await otherUser).statusCode).toBe(200);
+      // The finished export no longer blocks the user.
+      expect((await p.get('/api/history/export.csv')).statusCode).toBe(200);
+      expect((await p.get('/api/history/export.csv')).statusCode).toBe(200);
+      const flood = await p.get('/api/history/export.csv');
+      expect(expectError(flood, 429, 'RATE_LIMITED').message).toMatch(/^Troppe richieste/);
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => {});
+      blocker.release();
+      await limited.close();
+    }
+  });
+
   it('escapes CSV fields', () => {
     expect(csvField('semplice')).toBe('semplice');
     expect(csvField('a,b')).toBe('"a,b"');
@@ -224,5 +302,20 @@ describe('stats', () => {
     );
     await again.post('/api/games/slot/spin', { amount: CHIP, idempotencyKey: key() });
     expect((await again.get('/api/stats')).json<StatsResponse>().session.rounds).toBe(1);
+  });
+
+  it('limits statistics to 30 requests per minute per IP', async () => {
+    const limited = await createTestEnv();
+    try {
+      const p = await registerPlayer(limited.app);
+      for (let i = 0; i < STATS_RATE_LIMIT; i++) {
+        expect((await p.get('/api/stats')).statusCode).toBe(200);
+      }
+      expectError(await p.get('/api/stats'), 429, 'RATE_LIMITED');
+      // Other routes are not affected.
+      expect((await p.get('/api/wallet')).statusCode).toBe(200);
+    } finally {
+      await limited.close();
+    }
   });
 });

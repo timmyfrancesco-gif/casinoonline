@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type {
   BlackjackRoundResponse,
+  FairnessResponse,
   RouletteSpinResponse,
   SlotSpinResponse,
   VideoPokerRoundResponse,
@@ -151,11 +152,27 @@ test('registrazione, i quattro tavoli, storico e verifica provably fair', async 
     expect(lines).toHaveLength(5);
   });
 
-  await test.step('profilo: rotazione dei seed', async () => {
+  await test.step('profilo: rotazione sul prossimo seed server annunciato', async () => {
     await nav.getByRole('link', { name: 'Profilo' }).click();
     await expect(page.getByText('Prossimo nonce')).toBeVisible();
-    await page.getByRole('button', { name: 'Ruota i seed e rivela quello attuale' }).click();
+    const valueOf = (label: string) =>
+      page.locator('dt', { hasText: label }).locator('xpath=following-sibling::dd[1]');
+    const nextHash = valueOf('Hash del prossimo seed server');
+    await expect(nextHash).toHaveText(/^[0-9a-f]{64}$/);
+    const announced = (await nextHash.textContent())!;
+    const rotated = await clickAndReadJson<FairnessResponse>(
+      page,
+      page.getByRole('button', { name: 'Ruota i seed e rivela quello attuale' }),
+      '/fairness/rotate',
+    );
+    expect(rotated.active.serverSeedHash).toBe(announced);
     await expect(page.getByRole('status').filter({ hasText: 'Seed rivelato' })).toBeVisible();
+    await expect(
+      page.getByRole('status').filter({ hasText: 'usa il seed server annunciato' }),
+    ).toBeVisible();
+    await expect(valueOf('Impronta del seed server (SHA-256)')).toHaveText(announced);
+    await expect(nextHash).toHaveText(rotated.next.serverSeedHash);
+    expect(rotated.next.serverSeedHash).not.toBe(announced);
     const revealed = page.getByRole('listitem').filter({ hasText: 'Verifica con questa coppia' });
     await expect(revealed).toHaveCount(1);
     await expect(revealed).toContainText('4 partite (nonce 0–3)');
@@ -164,6 +181,10 @@ test('registrazione, i quattro tavoli, storico e verifica provably fair', async 
   for (const [game, name] of Object.entries(GAME_NAMES)) {
     await test.step(`verifica nel browser della partita di ${name}`, async () => {
       await nav.getByRole('link', { name: 'Storico' }).click();
+      // The Verify page left behind has a «Gioco» select too: wait for the (lazy) history page.
+      await expect(
+        page.getByRole('heading', { level: 1, name: 'Storico delle partite' }),
+      ).toBeVisible();
       await page.getByLabel('Gioco', { exact: true }).selectOption(game);
       const rows = page.getByRole('table').getByRole('row');
       await expect(rows).toHaveCount(2);

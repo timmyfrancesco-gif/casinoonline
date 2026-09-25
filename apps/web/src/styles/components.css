@@ -554,6 +554,9 @@ legend {
 /* ---------------------------------------------------------------- tables */
 
 .table-scroll {
+  /* Containing block of the visually hidden cells' text (position: absolute): without it they
+     are placed against the viewport and widen the page on narrow screens. */
+  position: relative;
   width: 100%;
   overflow-x: auto;
 }

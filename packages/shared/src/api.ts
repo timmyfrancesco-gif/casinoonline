@@ -45,6 +45,7 @@ import {
   ROULETTE_EVEN_TYPES,
   ROULETTE_INDEXED_TYPES,
   ROULETTE_INSIDE_TYPES,
+  SERVER_SEED_PATTERN,
   UNITS_PER_CHIP,
   type Amount,
   type BlackjackAction,
@@ -189,6 +190,15 @@ export const rotateSeedRequestSchema = z.object({
     .string()
     .regex(CLIENT_SEED_PATTERN, 'Seed client: 1-64 caratteri ASCII stampabili, senza spazi né ":"')
     .optional(),
+  /**
+   * FairnessResponse.next.serverSeedHash as shown to the player when choosing the client seed.
+   * If it is no longer the pending next seed (a rotation happened meanwhile) the request fails
+   * with 409 CONFLICT, so the new pair always uses the seed the player saw committed.
+   */
+  nextServerSeedHash: z
+    .string()
+    .regex(SERVER_SEED_PATTERN, 'Hash del prossimo seed server: 64 caratteri esadecimali')
+    .optional(),
 });
 export type RotateSeedRequest = z.infer<typeof rotateSeedRequestSchema>;
 
@@ -212,8 +222,18 @@ export interface RevealedSeedPair {
   revealedAt: string;
 }
 
+/**
+ * The server seed of the NEXT pair, generated in advance: only its hash is shown. Rotation turns
+ * it into the active server seed (active.serverSeedHash then equals this hash), so the server
+ * commits to it before the player chooses the new client seed.
+ */
+export interface NextServerSeed {
+  serverSeedHash: string;
+}
+
 export interface FairnessResponse {
   active: ActiveSeedPair;
+  next: NextServerSeed;
   /** Most recent revealed pairs first (max 20). */
   revealed: RevealedSeedPair[];
 }

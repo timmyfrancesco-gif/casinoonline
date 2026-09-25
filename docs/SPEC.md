@@ -37,8 +37,10 @@ e2e               Playwright (Chromium) sul sistema completo
 
 ## 2. Database (PostgreSQL 16)
 
-Migrazioni SQL numerate in `apps/server/migrations/NNN_nome.sql`, applicate in ordine da un runner
-minimale (`src/db/migrate.ts`) che registra le versioni in `schema_migrations` e usa un advisory lock.
+Migrazioni SQL numerate in `apps/server/migrations/NNN_nome.sql` (`001_init`,
+`002_next_server_seed`), applicate in ordine da un runner minimale (`src/db/migrate.ts`) che registra
+le versioni in `schema_migrations` e usa un advisory lock. Il bundle le copia in `dist/migrations`,
+dove il server le trova da solo (`MIGRATIONS_DIR` le sostituisce).
 I `bigint` vengono letti come `number` (tutti i valori restano entro `Number.MAX_SAFE_INTEGER`).
 
 ```sql
@@ -75,6 +77,12 @@ seed_pairs(
   created_at timestamptz NOT NULL DEFAULT now(),
   revealed_at timestamptz NULL
 )                                                 -- unique index (user_id) WHERE active
+next_server_seeds(                                -- 002: il server seed della PROSSIMA coppia (§4)
+  user_id bigint PK REFERENCES users ON DELETE CASCADE,
+  server_seed text NOT NULL,                      -- 64 hex, segreto fino alla rivelazione della coppia
+  server_seed_hash text NOT NULL,                 -- sha256(server_seed) hex, mostrato in anticipo
+  created_at timestamptz NOT NULL DEFAULT now()
+)                                                 -- esattamente una riga per utente
 rounds(
   id bigserial PK,
   user_id bigint NOT NULL REFERENCES users ON DELETE CASCADE,
@@ -120,13 +128,18 @@ Invariante verificata dai test: per ogni utente `wallets.balance = SUM(ledger.am
 
 ## 3. Flusso di una puntata (transazione unica, `READ COMMITTED` + lock espliciti)
 
+0. Il corpo è validato con lo schema zod (400 `VALIDATION_ERROR`, anche per importi non multipli
+   di 100). Nel processo le transazioni di denaro di uno stesso utente sono messe in coda prima di
+   prendere una connessione del pool (`withUserTransaction`); la transazione apre con
+   `BEGIN ISOLATION LEVEL READ COMMITTED` esplicito.
 1. `SELECT ... FROM users WHERE id=$1 FOR UPDATE` — serializza tutte le operazioni di denaro
-   dell'utente (anche richieste parallele da più schede).
+   dell'utente (anche richieste parallele da più schede e da più istanze del server).
 2. Idempotenza: se esiste un round con `(user_id, idempotency_key)`: stesso `request_hash` →
    restituire la stessa risposta (ricostruita dal round); hash diverso → 409 `CONFLICT`.
-3. Controlli: autoesclusione (403 `RG_SELF_EXCLUDED`), limiti tavolo e fiches intere
-   (400 `BET_LIMIT`), round aperto dello stesso gioco (409 `ROUND_ALREADY_OPEN`), saldo
-   (400 `INSUFFICIENT_FUNDS`), limiti di perdita (403 `RG_LOSS_LIMIT`, vedi §5).
+3. Controlli: autoesclusione (403 `RG_SELF_EXCLUDED`), limiti tavolo (400 `BET_LIMIT`; le fiches
+   non intere sono già respinte dallo schema con 400 `VALIDATION_ERROR`), round aperto dello stesso
+   gioco (409 `ROUND_ALREADY_OPEN`), saldo (400 `INSUFFICIENT_FUNDS`), limiti di perdita
+   (403 `RG_LOSS_LIMIT`, vedi §5).
 4. Seed: `SELECT ... FROM seed_pairs WHERE user_id=$1 AND active FOR UPDATE`;
    `nonce = next_nonce`; `next_nonce = next_nonce + 1`.
 5. Esito: `createRoundRng({serverSeed, clientSeed, nonce})` + funzione del motore.
@@ -151,12 +164,24 @@ Giochi a più passi (blackjack, video poker):
 
 ## 4. Provably fair
 
-- Alla registrazione si crea la prima coppia di seed attiva: `server_seed` = 32 byte casuali
-  (`crypto.randomBytes`) in hex, `client_seed` = 16 byte casuali in hex.
-- `GET /fairness`: coppia attiva (solo hash del server seed) + ultime 20 coppie rivelate.
-- `POST /fairness/rotate`: vietato se esiste un round `open` (409 `SEED_ROTATION_BLOCKED`); rivela
-  la coppia attiva (`active=false`, `revealed_at=now()`) e ne crea una nuova con il client seed
-  indicato (o casuale). Transazione con lock utente.
+- Alla registrazione si crea la prima coppia di seed attiva (`server_seed` = 32 byte casuali da
+  `crypto.randomBytes` in hex, `client_seed` = 16 byte casuali in hex) e il **prossimo server seed**
+  (`next_server_seeds`, 32 byte casuali). La migrazione 002 lo genera anche per gli utenti già
+  esistenti.
+- `GET /fairness`: coppia attiva (solo hash del server seed), `next.serverSeedHash` (hash del
+  prossimo server seed) + ultime 20 coppie rivelate.
+- `POST /fairness/rotate` `{ clientSeed?, nextServerSeedHash? }`: vietato se esiste un round `open`
+  (409 `SEED_ROTATION_BLOCKED`). Se `nextServerSeedHash` è indicato e non è l'hash del prossimo
+  seed in attesa (rotazione avvenuta altrove) → 409 `CONFLICT`, nulla cambia. Altrimenti rivela la
+  coppia attiva (`active=false`, `revealed_at=now()`), crea la nuova coppia con il client seed
+  indicato (o casuale) e come server seed **il prossimo seed già impegnato**, poi sostituisce il
+  prossimo seed con uno nuovo. Transazione con lock utente e `FOR UPDATE` su `next_server_seeds`.
+- Quindi il server è vincolato al server seed di una coppia prima che il giocatore ne scelga il
+  client seed: non può provare molti server seed e tenere il più favorevole. Il web genera sempre
+  il client seed nel browser (casuale se il campo è vuoto) e invia `nextServerSeedHash`.
+- Il web conserva in `localStorage` l'hash di ogni coppia visto prima della rivelazione (e, alla
+  rotazione, l'hash `next` mostrato prima); la pagina "Verifica" confronta il seed rivelato con
+  questa copia, non con l'hash inviato dal server insieme al seed.
 - Ogni round espone `fairness` (`FairnessRef`); `serverSeed` è valorizzato solo se la coppia è
   rivelata. `GET /history/:id` restituisce `verifyInput`, che con il seed rivelato riproduce il round
   tramite `verifyRound()`; la pagina web "Verifica" lo fa nel browser.
@@ -166,7 +191,8 @@ Giochi a più passi (blackjack, video poker):
 - **Limiti di perdita** per finestre mobili `24h`, `7d`, `30d`.
   `used(period) = max(0, -(SUM(ledger.amount) WHERE kind IN ('stake','payout') AND created_at > now() - period))`.
   Una nuova puntata (o un raddoppio/split) di importo `s` è rifiutata se `used + s > value`
-  (conservativo: la puntata è considerata persa). `details: { period, remaining }`.
+  (conservativo: la puntata è considerata persa). `details: { period, remaining }`, con
+  `remaining` arrotondato per difetto alle fiches intere (la puntata massima ancora ammessa).
   Abbassare/impostare un limite dove non c'era → immediato. Alzare o rimuovere → diventa
   `pending` ed entra in vigore dopo 24 h (`LIMIT_INCREASE_DELAY_MS`); i pending scaduti si
   applicano in modo lazy a ogni lettura/controllo. Un nuovo abbassamento cancella il pending.
@@ -176,8 +202,10 @@ Giochi a più passi (blackjack, video poker):
   puntate no (403 `RG_SELF_EXCLUDED`, `details.until`). Nuovi round bloccati; un round a più passi
   già aperto si può comunque completare (stand/draw), ma non si possono aggiungere fiches.
 - **Reality check**: ogni `reality_check_minutes` (15/30/60) il client mostra un avviso modale
-  bloccante con tempo di sessione, round giocati e risultato netto (`GET /rg` → `session`); il
-  giocatore sceglie "Continua" o "Esci". La sessione parte al login.
+  bloccante con tempo di sessione, round giocati e risultato netto (`GET /rg` → `session`), un
+  collegamento agli strumenti di gioco responsabile e il numero verde; il giocatore sceglie
+  "Continua" o "Esci" (stesso peso, nessuno dei due con il focus iniziale). La sessione parte al
+  login.
 - **Reset del saldo** (`POST /wallet/reset`): solo se `balance < STARTING_BALANCE` e nessun round
   aperto; porta il saldo a `STARTING_BALANCE` con un movimento 'reset'. Non tocca statistiche e limiti.
 - **Statistiche oneste** (`GET /stats`): totali puntati/restituiti/netto per sempre, per gioco e per
@@ -191,18 +219,29 @@ Giochi a più passi (blackjack, video poker):
   `timingSafeEqual`. Login con messaggio generico `INVALID_CREDENTIALS`; verifica scrypt eseguita
   anche per username inesistenti (tempo costante).
 - Sessione: token casuale 32 byte (base64url) nel cookie `casino_sid` (`HttpOnly`, `SameSite=Lax`,
-  `Path=/`, `Secure` in produzione). Nel DB solo `sha256(token)`. Scadenza assoluta 7 giorni,
+  `Path=/`, `Secure` in produzione, dove il nome diventa `__Host-casino_sid`). Nel DB solo
+  `sha256(token)`. Scadenza assoluta 7 giorni,
   inattività 12 ore (`last_seen_at` aggiornato al massimo una volta al minuto). Logout e cambio
-  password revocano le sessioni (il cambio password mantiene solo quella corrente).
+  password revocano le sessioni (il cambio password mantiene solo quella corrente, con un nuovo
+  token e nuovo cookie).
 - CSRF: ogni richiesta non-GET/HEAD deve avere `x-casino-csrf: 1`; se c'è l'header `Origin` deve
   corrispondere a `APP_ORIGIN` → altrimenti 403 `CSRF_REJECTED`.
-- Rate limit (`@fastify/rate-limit`): globale 300 req/min per IP; login/registrazione 10/min per IP.
-- `@fastify/helmet` con CSP restrittiva (`default-src 'self'`; niente inline script).
+- Rate limit (`@fastify/rate-limit`) per IP: globale 300 req/min (`RATE_LIMIT_GLOBAL`); 10/min
+  (`RATE_LIMIT_AUTH`) su registrazione, login, cambio password, cancellazione account; 5/min su
+  `GET /history/export.csv` (più un solo export in corso per utente) e 30/min su `GET /stats`.
+- `@fastify/helmet` con CSP restrittiva (`default-src 'self'`; niente inline script);
+  `Cache-Control: no-store` su tutte le risposte `/api`.
+- Tempi massimi: 30 s per ricevere una richiesta (`requestTimeout`), 15 s per istruzione SQL
+  (`statement_timeout`, tolto durante le migrazioni), 10 s di attesa per una connessione del pool.
 - Tutti i body/query validati con gli schemi zod di `@casino/shared` → 400 `VALIDATION_ERROR`.
 - Errori: handler unico, niente stack trace al client, log strutturato (pino) senza password/token.
 - Configurazione da env: `DATABASE_URL`, `PORT` (default 3000), `HOST` (default 0.0.0.0),
-  `APP_ORIGIN` (default http://localhost:5173), `NODE_ENV`, `COOKIE_SECURE` (default true in
-  production), `SERVE_WEB_DIST` (percorso della build web da servire, opzionale), `TRUST_PROXY`.
+  `APP_ORIGIN` (default http://localhost:5173, più origini separate da virgola), `NODE_ENV`,
+  `COOKIE_SECURE` (default true in production), `SERVE_WEB_DIST` (percorso della build web da
+  servire, opzionale), `TRUST_PROXY` (default false; dietro un proxy il numero di proxy, es. `1`, o
+  un elenco di IP/CIDR: `true` si fiderebbe di un `X-Forwarded-For` scelto dal client),
+  `LOG_LEVEL` (default info, silent nei test), `RATE_LIMIT_GLOBAL`, `RATE_LIMIT_AUTH`,
+  `MIGRATIONS_DIR` (default: cercata accanto al codice).
 
 ## 7. Web (apps/web)
 
@@ -231,7 +270,8 @@ Giochi a più passi (blackjack, video poker):
 - Server: Vitest con PostgreSQL reale (`TEST_DATABASE_URL`, default
   `postgres://postgres:postgres@localhost:5432/casino_test`) e `app.inject()`. Copertura: auth,
   CSRF, idempotenza, concorrenza (richieste parallele non portano il saldo sotto zero), limiti di
-  perdita e pending, autoesclusione, rotazione seed + verifica dei round con `verifyRound`,
-  invarianti del registro, cancellazione account.
+  perdita e pending, autoesclusione, rotazione seed (prossimo seed impegnato, hash obsoleto → 409)
+  - verifica dei round con `verifyRound`, migrazioni, invarianti del registro, cancellazione
+    account. `TEST_DATABASE_URL` si legge solo dalla shell, non da `.env`.
 - Web: Vitest + Testing Library (componenti chiave) — e2e Playwright: registrazione → roulette →
   saldo aggiornato → storico → verifica dopo rotazione.

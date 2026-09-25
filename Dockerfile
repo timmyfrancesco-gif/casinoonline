@@ -36,26 +36,26 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 COPY . .
 # apps/web/dist (static SPA) and apps/server/dist (esbuild bundle + dist/migrations).
 RUN pnpm --filter @casino/web build && pnpm --filter @casino/server build
-# Production-only node_modules of the server (fastify, pg, zod, ...), without dev tooling.
+# Production-only node_modules of the server (fastify, pg, zod, ...), without dev tooling. The
+# @casino/* workspace packages are devDependencies: esbuild already inlined them in the bundle.
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm --filter @casino/server deploy --prod --legacy /prod/server
 
 # ---------------------------------------------------------------------------
-# runtime: only the bundle, its runtime dependencies, migrations and the web build
+# runtime: only the bundle (with dist/migrations), its runtime dependencies and the web build
 # ---------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
-    SERVE_WEB_DIST=/app/web \
-    MIGRATIONS_DIR=/app/server/migrations
+    SERVE_WEB_DIST=/app/web
 WORKDIR /app/server
 
 # Files stay owned by root (read-only for the app user).
 COPY --from=build /prod/server/package.json ./package.json
 COPY --from=build /prod/server/node_modules ./node_modules
+# The server finds dist/migrations next to dist/index.js (no MIGRATIONS_DIR needed).
 COPY --from=build /repo/apps/server/dist ./dist
-COPY --from=build /repo/apps/server/migrations ./migrations
 COPY --from=build /repo/apps/web/dist /app/web
 
 # Unprivileged user shipped with the official Node image (uid 1000).

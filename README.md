@@ -47,8 +47,9 @@ Interfaccia in italiano.
   - **Video Poker Jacks or Better 9/6** (99,54% con strategia ottimale) con suggerimento calcolato
     esattamente nel browser.
 - **Provably fair**: ogni partita deriva da HMAC-SHA256(server seed, client seed:nonce); impronta
-  del server seed mostrata prima di giocare, rotazione dei seed, **verifica nel browser** e script
-  indipendente ([docs/PROVABLY_FAIR.md](docs/PROVABLY_FAIR.md)).
+  del server seed mostrata prima di giocare, impronta del **prossimo** server seed mostrata prima di
+  scegliere il nuovo client seed, rotazione dei seed, **verifica nel browser** e script indipendente
+  ([docs/PROVABLY_FAIR.md](docs/PROVABLY_FAIR.md)).
 - **Server autoritativo**: esiti, saldo e carte coperte esistono solo sul server; idempotenza delle
   puntate; mani di blackjack e video poker riprese dopo un ricaricamento.
 - **Integrità del saldo**: registro append-only in PostgreSQL, saldo mai negativo, ogni movimento in
@@ -70,14 +71,15 @@ Interfaccia in italiano.
 
 ## Screenshot
 
-Catturati dai test end-to-end (`E2E_SCREENSHOT_DIR=<cartella> pnpm test:e2e` salva le schermate
-del percorso principale).
+Catturati dai test end-to-end (`E2E_SCREENSHOT_DIR=<cartella> pnpm test:e2e` salva in PNG le
+schermate del percorso principale) e convertiti in WebP con qualità 92 (es. `cwebp -q 92`) per
+alleggerire il repository.
 
-| Lobby                                                     | Roulette dopo un giro                                     |
-| --------------------------------------------------------- | --------------------------------------------------------- |
-| ![Lobby con i quattro tavoli](docs/screenshots/lobby.png) | ![Roulette europea](docs/screenshots/roulette.png)        |
-| **Blackjack**                                             | **Verifica provably fair nel browser**                    |
-| ![Blackjack](docs/screenshots/blackjack.png)              | ![Verifica di una partita](docs/screenshots/verifica.png) |
+| Lobby                                                      | Roulette dopo un giro                                      |
+| ---------------------------------------------------------- | ---------------------------------------------------------- |
+| ![Lobby con i quattro tavoli](docs/screenshots/lobby.webp) | ![Roulette europea](docs/screenshots/roulette.webp)        |
+| **Blackjack**                                              | **Verifica provably fair nel browser**                     |
+| ![Blackjack](docs/screenshots/blackjack.webp)              | ![Verifica di una partita](docs/screenshots/verifica.webp) |
 
 ## Architettura
 
@@ -94,7 +96,7 @@ flowchart LR
   end
   engine["packages/engine<br/>RNG HMAC-SHA256 · roulette · slot<br/>blackjack · video poker · verifyRound()"]
   shared["packages/shared<br/>contratto API (zod) · costanti"]
-  db[("PostgreSQL 16<br/>users · sessions · wallets · ledger<br/>rounds · seed_pairs · loss_limits")]
+  db[("PostgreSQL 16<br/>users · sessions · wallets · ledger · rounds<br/>seed_pairs · next_server_seeds · loss_limits")]
 
   web -- "HTTPS JSON + cookie casino_sid<br/>header x-casino-csrf" --> server
   server -- "SQL (pg), transazioni<br/>con lock di riga" --> db
@@ -169,17 +171,29 @@ Il file [`docker-compose.yml`](docker-compose.yml) legge queste variabili dalla 
 `.env` accanto a esso (escluso da git). Hanno il prefisso `CASINO_` per non collidere con il `.env`
 di sviluppo:
 
-| Variabile              | Predefinito                                   | Significato                                                |
-| ---------------------- | --------------------------------------------- | ---------------------------------------------------------- |
-| `POSTGRES_PASSWORD`    | `casino`                                      | **Segreto**: password del database. Cambiala fuori dal PC. |
-| `CASINO_ORIGIN`        | `http://localhost:3000,http://127.0.0.1:3000` | Origini pubbliche del sito (controllo CSRF).               |
-| `CASINO_COOKIE_SECURE` | `false`                                       | `true` quando il sito è servito in HTTPS.                  |
-| `CASINO_TRUST_PROXY`   | `false`                                       | `1` dietro un reverse proxy.                               |
-| `CASINO_LOG_LEVEL`     | `info`                                        | Livello dei log (pino, JSON).                              |
+| Variabile              | Predefinito                                   | Significato                                                                                  |
+| ---------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`    | `casino`                                      | **Segreto**: password del database, qualsiasi carattere. Cambiala fuori dal PC (vedi sotto). |
+| `CASINO_ORIGIN`        | `http://localhost:3000,http://127.0.0.1:3000` | Origini pubbliche del sito (controllo CSRF).                                                 |
+| `CASINO_COOKIE_SECURE` | `false`                                       | `true` quando il sito è servito in HTTPS.                                                    |
+| `CASINO_TRUST_PROXY`   | `false`                                       | `1` (numero di proxy) dietro un reverse proxy.                                               |
+| `CASINO_LOG_LEVEL`     | `info`                                        | Livello dei log (pino, JSON).                                                                |
 
 La porta del database non è esposta fuori dalla rete di Compose. L'unico segreto dell'applicazione
-è la stringa di connessione al database: le sessioni usano token casuali salvati come hash, non
-serve una chiave di firma.
+è la password del database: le sessioni usano token casuali salvati come hash, non serve una chiave
+di firma. L'applicazione la riceve in `PGPASSWORD` e non dentro `DATABASE_URL`, quindi anche
+caratteri come `/ + = # ? %` vanno bene.
+
+`POSTGRES_PASSWORD` viene applicata **solo quando il volume `pgdata` viene creato** (primo
+`docker compose up`). Per cambiarla dopo, aggiorna prima la password nel database e poi la
+variabile:
+
+```sh
+docker compose exec db psql -U casino -c "ALTER USER casino PASSWORD 'nuova-password'"
+POSTGRES_PASSWORD='nuova-password' docker compose up -d
+```
+
+In alternativa `docker compose down -v` ricrea il volume, ma **cancella tutti i dati**.
 
 Solo l'immagine:
 
@@ -191,10 +205,15 @@ docker run --rm -p 3000:3000 \
   casinoonline
 ```
 
-L'immagine (multi-stage, `node:22-bookworm-slim`) contiene solo il bundle del server, le sue
-dipendenze di produzione, le migrazioni e la build del web; gira come utente non privilegiato
-`node`, espone la porta 3000 e ha un `HEALTHCHECK` su `/api/health` (sano solo se il database
-risponde). Con un registry mirror: `--build-arg NODE_IMAGE=<mirror>/node:22-bookworm-slim`.
+Una password dentro `DATABASE_URL` con caratteri speciali (`/ + = # ? % @ :`) va codificata come
+in un URL (`encodeURIComponent`, es. `/` → `%2F`), altrimenti la stringa non è valida e il server
+non parte (`Invalid URL`); in alternativa lasciala fuori dall'URL e passala con `-e PGPASSWORD=…`.
+
+L'immagine (multi-stage, `node:22-bookworm-slim`) contiene solo il bundle del server (con le
+migrazioni in `dist/migrations`), le sue dipendenze npm di produzione e la build del web: i
+pacchetti `@casino/*` sono già inclusi nel bundle. Gira come utente non privilegiato `node`, espone
+la porta 3000 e ha un `HEALTHCHECK` su `/api/health` (sano solo se il database risponde). Con un
+registry mirror: `--build-arg NODE_IMAGE=<mirror>/node:22-bookworm-slim`.
 
 ## Script
 
@@ -216,6 +235,10 @@ Dalla radice del repository:
 Per un singolo pacchetto: `pnpm --filter @casino/engine test`, `pnpm --filter @casino/web build`,
 `pnpm --filter @casino/web preview`, …
 
+`vite preview` (porta 4173, dopo la build del web) inoltra `/api` al server su 3000: `APP_ORIGIN`
+deve includere `http://localhost:4173` (come in `.env.example`), altrimenti accesso e registrazione
+ricevono `403 CSRF_REJECTED`.
+
 ## Test
 
 | Pacchetto        | Comando                             | Cosa copre                                                                                                                                                                             |
@@ -226,16 +249,28 @@ Per un singolo pacchetto: `pnpm --filter @casino/engine test`, `pnpm --filter @c
 | `@casino/web`    | `pnpm --filter @casino/web test`    | Componenti chiave con Testing Library (jsdom).                                                                                                                                         |
 | e2e              | `pnpm test:e2e:full`                | Registrazione e i quattro tavoli, storico e verifica provably fair, sessione/CSRF/CSP, ripresa di una mano, cancellazione account, limiti di perdita, pausa, reality check (Chromium). |
 
-- I test del server usano `TEST_DATABASE_URL` (predefinito
-  `postgres://postgres:postgres@localhost:5432/casino_test`): lo schema viene **cancellato e
-  ricreato** a ogni esecuzione, quindi il nome del database deve contenere `test`.
+- I test del server usano il database `TEST_DATABASE_URL` (predefinito `casino_test` in locale):
+  lo schema viene **cancellato e ricreato** a ogni esecuzione, quindi il nome deve contenere `test`.
 - I test e2e avviano il server di produzione su una porta libera con un database **`casino_e2e`**
   (`E2E_DATABASE_URL`, il nome deve finire con `_e2e`), cancellato e ricreato a ogni esecuzione.
-  La prima volta installa il browser: `pnpm exec playwright install chromium` (su Linux anche
-  `--with-deps`).
+  I log del server compaiono nell'output con il prefisso `[WebServer]`. La prima volta installa il
+  browser: `pnpm exec playwright install chromium` (su Linux anche `--with-deps`).
 - La CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) esegue formattazione, lint,
-  typecheck, tutti i test, build ed e2e con PostgreSQL 16, e costruisce l'immagine Docker con un
-  test di avvio. Il report di Playwright è allegato come artifact se l'e2e fallisce.
+  typecheck, tutti i test, build ed e2e con PostgreSQL 16; costruisce poi l'immagine Docker, ne
+  controlla il contenuto e la avvia sia da sola sia con Docker Compose (con una password del
+  database piena di caratteri speciali). Il report di Playwright è allegato come artifact se l'e2e
+  fallisce.
+
+Le variabili dei test si leggono **solo dalla shell** (Vitest e Playwright non caricano `.env`), es.
+`TEST_DATABASE_URL=postgres://utente:password@host:5432/casino_test pnpm --filter @casino/server test`:
+
+| Variabile            | Predefinito                                               | Uso                                                           |
+| -------------------- | --------------------------------------------------------- | ------------------------------------------------------------- |
+| `TEST_DATABASE_URL`  | `postgres://postgres:postgres@localhost:5432/casino_test` | Database dei test del server (il nome deve contenere `test`). |
+| `E2E_DATABASE_URL`   | `postgres://postgres:postgres@localhost:5432/casino_e2e`  | Database dei test e2e (il nome deve finire con `_e2e`).       |
+| `E2E_LOG_LEVEL`      | `warn`                                                    | Livello dei log del server durante l'e2e (es. `debug`).       |
+| `E2E_SCREENSHOT_DIR` | nessuno                                                   | Cartella in cui salvare le schermate del percorso principale. |
+| `E2E_PORT`           | una porta libera                                          | Porta del server di prova.                                    |
 
 ## Struttura del progetto
 
@@ -279,22 +314,22 @@ Per un singolo pacchetto: `pnpm --filter @casino/engine test`, `pnpm --filter @c
 Il server legge queste variabili d'ambiente (in sviluppo dal file `.env` della radice, vedi
 [`.env.example`](.env.example)):
 
-| Variabile           | Predefinito                              | Descrizione                                                                                                              |
-| ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL`      | **obbligatoria**                         | Stringa di connessione PostgreSQL. **Segreto.**                                                                          |
-| `PORT`              | `3000`                                   | Porta HTTP.                                                                                                              |
-| `HOST`              | `0.0.0.0`                                | Interfaccia di ascolto.                                                                                                  |
-| `APP_ORIGIN`        | `http://localhost:5173`                  | Origine/i pubbliche del sito, separate da virgola: l'`Origin` delle richieste di modifica deve essere tra queste (CSRF). |
-| `NODE_ENV`          | `development`                            | `development`, `production` o `test`.                                                                                    |
-| `COOKIE_SECURE`     | `true` in produzione, altrimenti `false` | Cookie `Secure`, HSTS e `upgrade-insecure-requests`. Deve essere `true` in HTTPS.                                        |
-| `SERVE_WEB_DIST`    | nessuno                                  | Cartella della build del web da servire (SPA). Nell'immagine Docker: `/app/web`.                                         |
-| `TRUST_PROXY`       | `false`                                  | `true`/`false`, numero di proxy davanti al server (es. `1`, consigliato) o elenco di IP/CIDR fidati.                     |
-| `LOG_LEVEL`         | `info` (`silent` nei test)               | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`.                                                            |
-| `RATE_LIMIT_GLOBAL` | `300`                                    | Richieste al minuto per IP su tutte le rotte.                                                                            |
-| `RATE_LIMIT_AUTH`   | `10`                                     | Richieste al minuto per IP su registrazione, accesso, cambio password, cancellazione account.                            |
-| `MIGRATIONS_DIR`    | cercata accanto al codice                | Cartella delle migrazioni SQL (nell'immagine: `/app/server/migrations`).                                                 |
-| `TEST_DATABASE_URL` | `…/casino_test`                          | Solo test del server.                                                                                                    |
-| `E2E_DATABASE_URL`  | `…/casino_e2e`                           | Solo test e2e.                                                                                                           |
+| Variabile           | Predefinito                              | Descrizione                                                                                                                |
+| ------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`      | **obbligatoria**                         | Stringa di connessione PostgreSQL. **Segreto.**                                                                            |
+| `PORT`              | `3000`                                   | Porta HTTP.                                                                                                                |
+| `HOST`              | `0.0.0.0`                                | Interfaccia di ascolto.                                                                                                    |
+| `APP_ORIGIN`        | `http://localhost:5173`                  | Origine/i pubbliche del sito, separate da virgola: l'`Origin` delle richieste di modifica deve essere tra queste (CSRF).   |
+| `NODE_ENV`          | `development`                            | `development`, `production` o `test`.                                                                                      |
+| `COOKIE_SECURE`     | `true` in produzione, altrimenti `false` | Cookie `Secure`, HSTS e `upgrade-insecure-requests`. Deve essere `true` in HTTPS.                                          |
+| `SERVE_WEB_DIST`    | nessuno                                  | Cartella della build del web da servire (SPA). Nell'immagine Docker: `/app/web`.                                           |
+| `TRUST_PROXY`       | `false`                                  | Numero di proxy davanti al server (di solito `1`) o elenco di IP/CIDR fidati. Evita `true` (vedi Deploy).                  |
+| `LOG_LEVEL`         | `info` (`silent` nei test)               | `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`.                                                              |
+| `RATE_LIMIT_GLOBAL` | `300`                                    | Richieste al minuto per IP su tutte le rotte (export CSV e statistiche hanno limiti propri, vedi [Sicurezza](#sicurezza)). |
+| `RATE_LIMIT_AUTH`   | `10`                                     | Richieste al minuto per IP su registrazione, accesso, cambio password, cancellazione account.                              |
+| `MIGRATIONS_DIR`    | cercata accanto al codice                | Cartella delle migrazioni SQL (`apps/server/migrations`; nel bundle e nell'immagine `dist/migrations`).                    |
+
+Le variabili dei test (`TEST_DATABASE_URL`, `E2E_*`) non sono lette da `.env`: vedi [Test](#test).
 
 ## Deploy in produzione
 
@@ -306,6 +341,7 @@ Variabili da impostare sulla piattaforma:
 
 ```sh
 DATABASE_URL=postgres://…          # segreto: dal provider del database (preferisci l'URL interno/privato)
+                                   # caratteri speciali della password codificati come in un URL
 APP_ORIGIN=https://casino.example.it   # l'indirizzo pubblico esatto, senza "/" finale
 COOKIE_SECURE=true                 # predefinito con NODE_ENV=production (già nell'immagine)
 TRUST_PROXY=1                      # un proxy/load balancer davanti all'app
@@ -315,15 +351,18 @@ TRUST_PROXY=1                      # un proxy/load balancer davanti all'app
   e porta), altrimenti ogni azione riceve `403 CSRF_REJECTED`. Più domini: separali con virgole.
 - **`COOKIE_SECURE`** resta `true` (HTTPS). Metterlo a `false` solo in locale, su HTTP.
 - **`TRUST_PROXY`**: le piattaforme terminano TLS su un proxy che aggiunge `X-Forwarded-For`.
-  Senza fidarsi del proxy tutti gli utenti sembrano lo stesso IP (rate limit condiviso); con `true`
-  un client potrebbe falsificare l'intestazione. Usa il **numero di proxy** (di solito `1`) e
-  controlla nei log (`remoteAddress`) che compaia il tuo IP pubblico.
+  Senza fidarsi del proxy tutti gli utenti sembrano lo stesso IP (rate limit condiviso). **Non usare
+  `true`**: il server prenderebbe come IP il primo valore di `X-Forwarded-For`, che sceglie il
+  client, e chiunque potrebbe aggirare il limite di 10 tentativi di accesso al minuto. Usa il
+  **numero di proxy** (di solito `1`) o l'elenco dei loro IP/CIDR, e controlla nei log
+  (`remoteAddress`) che compaia il tuo IP pubblico.
 - **`PORT`**: se la piattaforma impone una porta tramite `PORT`, il server la usa.
 - Health check: **`/api/health`** (`{"ok":true,"db":true}`).
 - Il database deve essere raggiungibile solo dall'applicazione; se il provider richiede TLS usa la
   stringa di connessione (con i parametri `sslmode`) che fornisce per le connessioni esterne.
-- Più repliche: l'app è senza stato (sessioni nel database), ma i contatori del rate limit sono in
-  memoria **per istanza**.
+- Più repliche: l'app è senza stato (sessioni nel database), ma i contatori del rate limit e il
+  vincolo di un export CSV alla volta per utente sono in memoria **per istanza** (la coerenza del
+  saldo è garantita dai lock del database anche tra istanze).
 
 ### Render
 
@@ -357,15 +396,21 @@ In `fly.toml` aggiungi un controllo HTTP su `/api/health` nella sezione `[[http_
 
 - **Password** con `crypto.scrypt` (N=16384, r=8, p=1, sale 16 byte), confronto a tempo costante;
   accesso con errore generico e tempo uguale anche per utenti inesistenti.
-- **Sessioni**: token casuale di 32 byte nel cookie `casino_sid` (`HttpOnly`, `SameSite=Lax`,
-  `Secure`); nel database solo lo SHA-256. Scadenza 7 giorni, inattività 12 ore; logout e cambio
-  password revocano le sessioni.
+- **Sessioni**: token casuale di 32 byte nel cookie `casino_sid` (`HttpOnly`, `SameSite=Lax`;
+  con `COOKIE_SECURE=true` diventa `__Host-casino_sid`, quindi `Secure`, `Path=/` e senza
+  dominio); nel database solo lo SHA-256. Scadenza 7 giorni, inattività 12 ore; il logout revoca
+  la sessione, il cambio password revoca tutte le altre e assegna un nuovo token a quella corrente.
 - **CSRF**: intestazione `x-casino-csrf: 1` obbligatoria e controllo di `Origin` su ogni richiesta
   di modifica.
 - **Intestazioni** con `@fastify/helmet`: CSP `default-src 'self'` senza script inline,
-  `frame-ancestors 'none'`, HSTS in HTTPS.
-- **Rate limit** per IP (300/min globale, 10/min per accesso e registrazione).
+  `frame-ancestors 'none'`, HSTS in HTTPS; `Cache-Control: no-store` su tutte le risposte `/api`.
+- **Rate limit** per IP: 300/min globale; 10/min su registrazione, accesso, cambio password e
+  cancellazione account; 5/min per l'export CSV (e un solo export alla volta per utente); 30/min
+  per le statistiche.
 - **Validazione** di ogni corpo e query con gli schemi zod condivisi; limite di 64 KiB per corpo.
+- **Tempi massimi**: 30 s per ricevere una richiesta, 15 s per ogni istruzione SQL, 10 s di attesa
+  per una connessione al database; le operazioni sul saldo di uno stesso utente sono messe in coda
+  nel processo, così una raffica di richieste non occupa tutte le connessioni.
 - **Errori** con un unico formato, senza stack trace; log JSON (pino) con password, cookie e token
   oscurati.
 - **Denaro virtuale ma coerente**: transazioni con lock di riga, vincolo `balance >= 0`,

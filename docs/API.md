@@ -9,18 +9,23 @@ Contratto completo (schemi zod e tipi TypeScript) in
 
 - Tutti i percorsi hanno il prefisso **`/api`**. Corpo delle richieste e delle risposte in JSON
   (`content-type: application/json`), massimo 64 KiB.
-- **Importi interi in unità**: 100 unità = 1 fiche. Le puntate devono essere fiches intere
-  (multipli di 100). Saldo iniziale: 100000 (1.000 fiches).
+- **Importi interi in unità**: 100 unità = 1 fiche. Puntate e limiti di perdita devono essere
+  fiches intere: un importo non multiplo di 100 è respinto dallo schema con `400 VALIDATION_ERROR`
+  (`details[].path` = `amount`, `bets.N.amount` o `value`). Saldo iniziale: 100000 (1.000 fiches).
 - **ID** del database serializzati come **stringhe** (`"42"`); date in ISO 8601 UTC.
 - Le carte sono interi 0-51 (valore = `codice % 13`, 0 = A … 12 = K; seme = `floor(codice / 13)`,
   0 ♠ 1 ♥ 2 ♦ 3 ♣).
 - Le risposte non contengono mai il sabot del blackjack, il mazzo del video poker, la carta coperta
   del banco o un server seed non ancora rivelato.
+- Le risposte di `/api` hanno `Cache-Control: no-store` (dati personali: né browser né proxy le
+  conservano).
 
 ### Sessione (cookie)
 
 Registrazione e accesso impostano il cookie **`casino_sid`**: `HttpOnly`, `SameSite=Lax`, `Path=/`,
-`Max-Age` 7 giorni, `Secure` quando `COOKIE_SECURE=true` (predefinito in produzione). Il server
+`Max-Age` 7 giorni. Con `COOKIE_SECURE=true` (predefinito in produzione) il cookie è `Secure` e si
+chiama **`__Host-casino_sid`**: il prefisso impone `Secure`, `Path=/` e nessun `Domain`, così un
+sottodominio o una pagina HTTP non possono impostarlo o sovrascriverlo. Il server
 salva solo lo SHA-256 del token. La sessione scade dopo **7 giorni** in assoluto o dopo **12 ore**
 di inattività. Senza sessione valida le rotte protette rispondono `401 UNAUTHENTICATED`.
 
@@ -52,35 +57,37 @@ Ogni errore ha il corpo
 { "error": { "code": "BET_LIMIT", "message": "Messaggio in italiano.", "details": {} } }
 ```
 
-| Stato | Codice                  | Quando                                                                | `details`                        |
-| ----- | ----------------------- | --------------------------------------------------------------------- | -------------------------------- |
-| 400   | `VALIDATION_ERROR`      | corpo/query non validi (413 se troppo grande, 415 se non JSON)        | `[{ path, message, code }]`      |
-| 401   | `UNAUTHENTICATED`       | sessione assente, scaduta o revocata                                  |                                  |
-| 401   | `INVALID_CREDENTIALS`   | nome utente o password errati (anche password attuale errata)         |                                  |
-| 403   | `CSRF_REJECTED`         | manca `x-casino-csrf: 1` oppure `Origin` non consentita               |                                  |
-| 404   | `NOT_FOUND`             | rotta o risorsa inesistente                                           |                                  |
-| 409   | `CONFLICT`              | `step` superato, chiave di idempotenza riusata, richiesta concorrente | `{ round }` per `step` superato  |
-| 429   | `RATE_LIMITED`          | troppe richieste                                                      | `{ retryAfterSeconds }`          |
-| 409   | `USERNAME_TAKEN`        | nome utente già usato (senza distinzione maiuscole/minuscole)         |                                  |
-| 400   | `UNDERAGE`              | meno di 18 anni (data di nascita, ora italiana)                       |                                  |
-| 400   | `INSUFFICIENT_FUNDS`    | saldo inferiore alla puntata                                          | `{ balance, required }`          |
-| 400   | `BET_LIMIT`             | fuori dai limiti del tavolo, fiches non intere, puntata non valida    | es. `{ min, max }`, `{ index }`  |
-| 403   | `RG_SELF_EXCLUDED`      | pausa attiva                                                          | `{ until }`                      |
-| 403   | `RG_LOSS_LIMIT`         | la puntata supererebbe un limite di perdita                           | `{ period, remaining }`          |
-| 409   | `ROUND_ALREADY_OPEN`    | c'è già una mano aperta a quel tavolo                                 | `{ roundId }`                    |
-| 409   | `ROUND_NOT_OPEN`        | la mano non esiste o è conclusa                                       | `{ round }` se conclusa          |
-| 400   | `ILLEGAL_ACTION`        | azione non consentita nello stato attuale                             | `{ allowedActions }` (blackjack) |
-| 409   | `SEED_ROTATION_BLOCKED` | rotazione dei seed con una mano in corso                              | `{ roundId }`                    |
-| 409   | `RESET_NOT_ALLOWED`     | reset con saldo ≥ iniziale o con una mano in corso                    |                                  |
-| 500   | `INTERNAL`              | errore imprevisto (nessun dettaglio interno viene esposto)            |                                  |
+| Stato | Codice                  | Quando                                                                                               | `details`                                    |
+| ----- | ----------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| 400   | `VALIDATION_ERROR`      | corpo/query non validi, importi non in fiches intere (413 se troppo grande, 415 se non JSON)         | `[{ path, message, code }]`                  |
+| 401   | `UNAUTHENTICATED`       | sessione assente, scaduta o revocata                                                                 |                                              |
+| 401   | `INVALID_CREDENTIALS`   | nome utente o password errati (anche password attuale errata)                                        |                                              |
+| 403   | `CSRF_REJECTED`         | manca `x-casino-csrf: 1` oppure `Origin` non consentita                                              |                                              |
+| 404   | `NOT_FOUND`             | rotta o risorsa inesistente                                                                          |                                              |
+| 409   | `CONFLICT`              | `step` superato, chiave di idempotenza riusata, richiesta concorrente, prossimo seed server cambiato | `{ round }` per `step` superato              |
+| 429   | `RATE_LIMITED`          | troppe richieste, oppure un export CSV già in corso                                                  | `{ retryAfterSeconds }` (solo per frequenza) |
+| 409   | `USERNAME_TAKEN`        | nome utente già usato (senza distinzione maiuscole/minuscole)                                        |                                              |
+| 400   | `UNDERAGE`              | meno di 18 anni (data di nascita, ora italiana)                                                      |                                              |
+| 400   | `INSUFFICIENT_FUNDS`    | saldo inferiore alla puntata                                                                         | `{ balance, required }`                      |
+| 400   | `BET_LIMIT`             | fuori dai limiti del tavolo, disposizione non valida                                                 | es. `{ min, max }`, `{ index }`              |
+| 403   | `RG_SELF_EXCLUDED`      | pausa attiva                                                                                         | `{ until }`                                  |
+| 403   | `RG_LOSS_LIMIT`         | la puntata supererebbe un limite di perdita                                                          | `{ period, remaining }` (fiches intere)      |
+| 409   | `ROUND_ALREADY_OPEN`    | c'è già una mano aperta a quel tavolo                                                                | `{ roundId }`                                |
+| 409   | `ROUND_NOT_OPEN`        | la mano non esiste o è conclusa                                                                      | `{ round }` se conclusa                      |
+| 400   | `ILLEGAL_ACTION`        | azione non consentita nello stato attuale                                                            | `{ allowedActions }` (blackjack)             |
+| 409   | `SEED_ROTATION_BLOCKED` | rotazione dei seed con una mano in corso                                                             | `{ roundId }`                                |
+| 409   | `RESET_NOT_ALLOWED`     | reset con saldo ≥ iniziale o con una mano in corso                                                   |                                              |
+| 500   | `INTERNAL`              | errore imprevisto (nessun dettaglio interno viene esposto)                                           |                                              |
 
 ### Limiti di frequenza
 
-Per indirizzo IP (dietro un proxy serve `TRUST_PROXY`, vedi README): **300 richieste al minuto** in
-totale e **10 al minuto** su ciascuna delle rotte `POST /auth/register`, `POST /auth/login`,
-`POST /account/password`, `DELETE /account`. Le risposte includono `x-ratelimit-limit`,
-`x-ratelimit-remaining`, `x-ratelimit-reset`; il `429` anche `retry-after`. I valori si cambiano con
-`RATE_LIMIT_GLOBAL` e `RATE_LIMIT_AUTH`.
+Per indirizzo IP (dietro un proxy serve `TRUST_PROXY` con il numero di proxy, vedi README):
+**300 richieste al minuto** in totale e **10 al minuto** su ciascuna delle rotte
+`POST /auth/register`, `POST /auth/login`, `POST /account/password`, `DELETE /account`
+(`RATE_LIMIT_GLOBAL` e `RATE_LIMIT_AUTH` cambiano questi due valori). Limiti fissi:
+**5 al minuto** per `GET /history/export.csv` (e un solo export alla volta per utente) e **30 al
+minuto** per `GET /stats`. Le risposte includono `x-ratelimit-limit`, `x-ratelimit-remaining`,
+`x-ratelimit-reset`; il `429` anche `retry-after`.
 
 ### Esempi con curl
 
@@ -117,8 +124,9 @@ Corpo: `{ username, password, birthDate, acceptTerms: true }`.
 - `password`: 10-128 caratteri.
 - `birthDate`: `YYYY-MM-DD`, serve solo a verificare i 18 anni e **non viene salvata**.
 
-Risposta `201` `MeResponse` e cookie di sessione. Crea portafoglio (1.000 fiches) e prima coppia di
-seed. Errori: `400 VALIDATION_ERROR`, `400 UNDERAGE`, `409 USERNAME_TAKEN`, `429`.
+Risposta `201` `MeResponse` e cookie di sessione. Crea portafoglio (1.000 fiches), prima coppia di
+seed e prossimo server seed (vedi [Provably fair](#provably-fair)). Errori: `400 VALIDATION_ERROR`,
+`400 UNDERAGE`, `409 USERNAME_TAKEN`, `429`.
 
 ```sh
 curl -s "${H[@]}" -X POST $B/api/auth/register \
@@ -153,7 +161,8 @@ curl -s "${H[@]}" -X POST $B/api/auth/logout -o /dev/null -w '%{http_code}\n'   
 ### `POST /api/account/password`
 
 Corpo: `{ currentPassword, newPassword }` (nuova: 10-128 caratteri). `204`; **tutte le altre
-sessioni** dell'utente vengono revocate, quella corrente resta attiva. Errori:
+sessioni** dell'utente vengono revocate, quella corrente resta attiva con un **nuovo token** (nuovo
+cookie `casino_sid` nella risposta: una copia del vecchio cookie non vale più). Errori:
 `401 INVALID_CREDENTIALS` (password attuale errata), `400 VALIDATION_ERROR`, `429`.
 
 ```sh
@@ -164,7 +173,8 @@ curl -s "${H[@]}" -X POST $B/api/account/password \
 ### `DELETE /api/account`
 
 Corpo: `{ password }`. `204`: cancella **subito e completamente** utente, sessioni, portafoglio,
-registro, partite, seed e limiti; cancella il cookie. Errori: `401 INVALID_CREDENTIALS`, `429`.
+registro, partite, seed (anche il prossimo server seed) e limiti; cancella il cookie. Errori:
+`401 INVALID_CREDENTIALS`, `429`.
 
 ```sh
 curl -s "${H[@]}" -X DELETE $B/api/account -d '{"password":"una-password-nuova"}' -w '%{http_code}\n'
@@ -197,6 +207,9 @@ Algoritmo e verifica: [PROVABLY_FAIR.md](PROVABLY_FAIR.md).
     "nextNonce": 0,
     "createdAt": "2026-09-25T15:54:00.512Z"
   },
+  "next": {
+    "serverSeedHash": "d3dc93fb71a433a1171442c3c71e953de7a47bdf9aed34a6a9e5dd301dd10f87"
+  },
   "revealed": [
     {
       "id": "1",
@@ -211,16 +224,31 @@ Algoritmo e verifica: [PROVABLY_FAIR.md](PROVABLY_FAIR.md).
 }
 ```
 
-`revealed`: ultime 20 coppie rivelate, dalla più recente.
+- `active`: coppia in uso (del server seed solo l'impronta).
+- `next.serverSeedHash`: impronta del **prossimo** server seed, generato in anticipo (alla
+  registrazione e a ogni rotazione). Alla prossima rotazione diventa il server seed della nuova
+  coppia, quindi il server vi è vincolato prima che il giocatore scelga il nuovo client seed.
+- `revealed`: ultime 20 coppie rivelate, dalla più recente.
 
 ### `POST /api/fairness/rotate`
 
-Corpo: `{ clientSeed? }` (1-64 caratteri ASCII stampabili, senza spazi né `:`; se assente è
-casuale). Rivela la coppia attiva e ne crea una nuova con nonce 0; risposta `200 FairnessResponse`.
-Con una mano aperta: `409 SEED_ROTATION_BLOCKED` (`details.roundId`).
+Corpo: `{ clientSeed?, nextServerSeedHash? }`.
+
+- `clientSeed`: 1-64 caratteri ASCII stampabili, senza spazi né `:`; se assente lo sceglie il server
+  (il sito ne genera sempre uno nel browser).
+- `nextServerSeedHash`: il `next.serverSeedHash` visto prima di scegliere il client seed. Se nel
+  frattempo i seed sono stati ruotati (es. da un'altra scheda) non è più quello in attesa e la
+  richiesta fallisce con `409 CONFLICT`, senza ruotare nulla.
+
+Rivela la coppia attiva e ne crea una nuova con nonce 0, il client seed indicato e come server seed
+quello impegnato in `next` (`active.serverSeedHash` della risposta è uguale all'hash visto prima);
+poi genera un nuovo prossimo server seed. Risposta `200 FairnessResponse`. Con una mano aperta:
+`409 SEED_ROTATION_BLOCKED` (`details.roundId`).
 
 ```sh
-curl -s "${H[@]}" -X POST $B/api/fairness/rotate -d '{"clientSeed":"il-mio-seed-2026"}'
+NEXT=$(curl -s -b "$J" $B/api/fairness | node -pe 'JSON.parse(require("fs").readFileSync(0)).next.serverSeedHash')
+curl -s "${H[@]}" -X POST $B/api/fairness/rotate \
+  -d "{\"clientSeed\":\"il-mio-seed-2026\",\"nextServerSeedHash\":\"$NEXT\"}"
 ```
 
 ## Giochi
@@ -249,7 +277,8 @@ Ogni partita restituisce `round` (`RoundSummary`):
 `stake` = totale puntato (raddoppi e divisioni inclusi), `payout` = totale restituito (puntata
 inclusa, 0 finché la mano è aperta), `balance` = saldo dopo l'operazione.
 
-Controlli comuni all'apertura di una partita, in quest'ordine: idempotenza, `RG_SELF_EXCLUDED`,
+Controlli comuni all'apertura di una partita, in quest'ordine: schema del corpo
+(`VALIDATION_ERROR`, anche per importi non in fiches intere), idempotenza, `RG_SELF_EXCLUDED`,
 `BET_LIMIT`, `ROUND_ALREADY_OPEN`, `INSUFFICIENT_FUNDS`, `RG_LOSS_LIMIT`. Limiti dei tavoli in
 [GIOCHI.md](GIOCHI.md#limiti-dei-tavoli).
 
@@ -265,7 +294,8 @@ Corpo: `{ bets: RouletteBet[1..40], idempotencyKey }`, con ogni puntata in una d
 
 Risposta `200 { round, settlement, balance }` con
 `settlement = { number, color, bets: [{ bet, win }], totalBet, totalWin }`. Una disposizione non
-valida (es. cavallo tra numeri non adiacenti) è `400 BET_LIMIT` con `details.index`.
+valida (es. cavallo tra numeri non adiacenti) è `400 BET_LIMIT` con `details.index`; un importo non
+multiplo di 100 è `400 VALIDATION_ERROR` con `details[].path` = `bets.N.amount`.
 
 ```sh
 curl -s "${H[@]}" -X POST $B/api/games/roulette/spin \
@@ -341,9 +371,11 @@ curl -s -b "$J" "$B/api/history?limit=2"
 ### `GET /api/history/export.csv?game=`
 
 Tutte le partite in CSV (UTF-8 con BOM, righe CRLF, importi in fiches con il punto decimale),
-scaricato come `storico-fiches-AAAA-MM-GG.csv`. Colonne: `id, gioco, stato, puntata_fiches,
-restituito_fiches, netto_fiches, creato_il, concluso_il, esito, seed_pair_id, hash_server_seed,
-client_seed, nonce, server_seed` (vuoto finché non è rivelato).
+scaricato come `storico-fiches-AAAA-MM-GG.csv` e inviato in streaming a blocchi. Al massimo 5
+export al minuto per IP e uno alla volta per utente (altrimenti `429 RATE_LIMITED`); niente `HEAD`.
+Colonne: `id, gioco, stato, puntata_fiches, restituito_fiches, netto_fiches, creato_il,
+concluso_il, esito, seed_pair_id, hash_server_seed, client_seed, nonce, server_seed` (vuoto finché
+non è rivelato).
 
 ```sh
 curl -s -b "$J" -OJ "$B/api/history/export.csv"
@@ -371,7 +403,7 @@ aperta). `404 NOT_FOUND` se la partita non esiste o è di un altro utente.
 }
 ```
 
-Solo partite concluse; `session` = dall'accesso corrente.
+Solo partite concluse; `session` = dall'accesso corrente. Al massimo 30 richieste al minuto per IP.
 
 ## Gioco responsabile
 

@@ -1,7 +1,7 @@
 import { createRoundRng, type GameId, type Rng } from '@casino/engine';
 import type { AppContext } from '../context.ts';
 import type { PoolClient } from '../db/pool.ts';
-import { withTransaction } from '../db/tx.ts';
+import { withUserTransaction } from '../db/tx.ts';
 import { apiError } from '../lib/errors.ts';
 import { canonicalJson, sha256Hex } from '../lib/util.ts';
 import { takeNonce } from '../services/fairness.ts';
@@ -74,7 +74,7 @@ async function selectRound(client: PoolClient, roundId: number): Promise<RoundRo
  * round + ledger writes, all in one transaction.
  */
 export async function runStake<R>(ctx: AppContext, flow: StakeFlow<R>): Promise<R> {
-  return withTransaction(ctx.pool, async (client) => {
+  return withUserTransaction(ctx.pool, flow.userId, async (client) => {
     const now = ctx.now();
     const user = await lockUser(client, flow.userId);
 
@@ -182,7 +182,7 @@ export async function runStep<R>(
     apply: (step: StepContext) => Promise<StepResult>;
   },
 ): Promise<R> {
-  return withTransaction(ctx.pool, async (client) => {
+  return withUserTransaction(ctx.pool, opts.userId, async (client) => {
     const now = ctx.now();
     const user = await lockUser(client, opts.userId);
     const row = opts.roundId === null ? null : await lockRound(client, opts.userId, opts.roundId);

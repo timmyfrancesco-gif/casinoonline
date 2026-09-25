@@ -44,6 +44,8 @@ export async function migrate(
   const client = await pool.connect();
   const applied: string[] = [];
   try {
+    // Waiting for another migrator or rewriting a large table may exceed the pool's timeout.
+    await client.query('SET statement_timeout = 0');
     await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
     try {
       await client.query(
@@ -76,7 +78,14 @@ export async function migrate(
       await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]);
     }
   } finally {
-    client.release();
+    // The connection goes back to the pool (the server reuses it): restore the timeout.
+    let broken: Error | undefined;
+    try {
+      await client.query('RESET statement_timeout');
+    } catch (err) {
+      broken = err as Error;
+    }
+    client.release(broken);
   }
   return { applied };
 }

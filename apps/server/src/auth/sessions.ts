@@ -24,12 +24,17 @@ declare module 'fastify' {
   }
 }
 
+/** 256-bit random token (43 base64url characters); only its sha256 is stored. */
+function newToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
 export async function createSession(
   db: Queryable,
   userId: number,
   now: Date,
 ): Promise<{ token: string; sessionId: number; startedAt: Date }> {
-  const token = randomBytes(32).toString('base64url');
+  const token = newToken();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
   // Opportunistic cleanup of this user's dead sessions.
   await db.query(
@@ -44,8 +49,26 @@ export async function createSession(
   return { token, sessionId: rows[0]!.id, startedAt: now };
 }
 
+/**
+ * Replaces the token of a session (e.g. after a password change). The row, and so its created_at
+ * (session start for the reality check and the session stats), is kept.
+ */
+export async function rotateSessionToken(db: Queryable, sessionId: number): Promise<string> {
+  const token = newToken();
+  await db.query('UPDATE sessions SET token_hash = $2 WHERE id = $1', [sessionId, sha256(token)]);
+  return token;
+}
+
+/**
+ * With Secure cookies the name carries the __Host- prefix: browsers then require Secure, Path=/
+ * and no Domain, so a sibling subdomain or plain-HTTP page cannot plant or overwrite the session.
+ */
+export function sessionCookieName(ctx: AppContext): string {
+  return ctx.config.cookieSecure ? `__Host-${SESSION_COOKIE}` : SESSION_COOKIE;
+}
+
 export function setSessionCookie(ctx: AppContext, reply: FastifyReply, token: string): void {
-  reply.setCookie(SESSION_COOKIE, token, {
+  reply.setCookie(sessionCookieName(ctx), token, {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
@@ -55,7 +78,7 @@ export function setSessionCookie(ctx: AppContext, reply: FastifyReply, token: st
 }
 
 export function clearSessionCookie(ctx: AppContext, reply: FastifyReply): void {
-  reply.clearCookie(SESSION_COOKIE, {
+  reply.clearCookie(sessionCookieName(ctx), {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
@@ -63,8 +86,8 @@ export function clearSessionCookie(ctx: AppContext, reply: FastifyReply): void {
   });
 }
 
-export function sessionToken(request: FastifyRequest): string | null {
-  const raw = request.cookies[SESSION_COOKIE];
+export function sessionToken(ctx: AppContext, request: FastifyRequest): string | null {
+  const raw = request.cookies[sessionCookieName(ctx)];
   return typeof raw === 'string' && TOKEN_PATTERN.test(raw) ? raw : null;
 }
 

@@ -14,15 +14,16 @@ import {
   clearSessionCookie,
   createSession,
   deleteSessionByToken,
+  rotateSessionToken,
   sessionToken,
   setSessionCookie,
 } from '../auth/sessions.ts';
 import type { AppContext } from '../context.ts';
 import type { Queryable } from '../db/pool.ts';
-import { withTransaction } from '../db/tx.ts';
+import { withTransaction, withUserTransaction } from '../db/tx.ts';
 import { apiError, parseWith } from '../lib/errors.ts';
 import { iso } from '../lib/util.ts';
-import { createSeedPair } from '../services/fairness.ts';
+import { createSeedPairs } from '../services/fairness.ts';
 import { applyMovement, getBalance, lockUser } from '../services/wallet.ts';
 
 const romeDate = new Intl.DateTimeFormat('en-CA', {
@@ -43,6 +44,10 @@ export function isAdult(birthDate: string, now: Date): boolean {
 
 function isPgUniqueViolation(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === '23505';
+}
+
+function isPgForeignKeyViolation(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === '23503';
 }
 
 async function meResponse(
@@ -99,7 +104,7 @@ export function authRoutes(ctx: AppContext) {
             amount: STARTING_BALANCE,
             now,
           });
-          await createSeedPair(client, user.id, undefined, now);
+          await createSeedPairs(client, user.id, now);
           const session = await createSession(client, user.id, now);
           return {
             userId: user.id,
@@ -138,9 +143,16 @@ export function authRoutes(ctx: AppContext) {
         : await verifyDummyPassword(body.password);
       if (!user || !ok) throw apiError('INVALID_CREDENTIALS');
 
-      const previous = sessionToken(request);
+      const previous = sessionToken(ctx, request);
       if (previous !== null) await deleteSessionByToken(pool, previous);
-      const session = await createSession(pool, user.id, ctx.now());
+      let session: Awaited<ReturnType<typeof createSession>>;
+      try {
+        session = await createSession(pool, user.id, ctx.now());
+      } catch (err) {
+        // The account was deleted after the password check: same answer as an unknown user.
+        if (isPgForeignKeyViolation(err)) throw apiError('INVALID_CREDENTIALS');
+        throw err;
+      }
       setSessionCookie(ctx, reply, session.token);
       return meResponse(
         pool,
@@ -150,7 +162,7 @@ export function authRoutes(ctx: AppContext) {
     });
 
     app.post('/auth/logout', async (request, reply) => {
-      const token = sessionToken(request);
+      const token = sessionToken(ctx, request);
       if (token !== null) await deleteSessionByToken(pool, token);
       clearSessionCookie(ctx, reply);
       return reply.code(204).send();
@@ -180,18 +192,21 @@ export function authRoutes(ctx: AppContext) {
           throw apiError('INVALID_CREDENTIALS', 'La password attuale non è corretta.');
         }
         const newHash = await hashPassword(body.newPassword);
-        await withTransaction(pool, async (client) => {
+        const token = await withUserTransaction(pool, auth.userId, async (client) => {
           await lockUser(client, auth.userId);
           await client.query('UPDATE users SET password_hash = $2 WHERE id = $1', [
             auth.userId,
             newHash,
           ]);
-          // Every other session is revoked; the current one stays signed in.
+          // Every other session is revoked; the current one stays signed in under a new token,
+          // so a copy of the old cookie stops working too.
           await client.query('DELETE FROM sessions WHERE user_id = $1 AND id <> $2', [
             auth.userId,
             auth.sessionId,
           ]);
+          return rotateSessionToken(client, auth.sessionId);
         });
+        setSessionCookie(ctx, reply, token);
         return reply.code(204).send();
       },
     );
@@ -210,9 +225,10 @@ export function authRoutes(ctx: AppContext) {
         if (!current || !(await verifyPassword(body.password, current.password_hash))) {
           throw apiError('INVALID_CREDENTIALS', 'La password non è corretta.');
         }
-        await withTransaction(pool, async (client) => {
+        await withUserTransaction(pool, auth.userId, async (client) => {
           await lockUser(client, auth.userId);
-          // ON DELETE CASCADE removes sessions, wallet, seeds, rounds, ledger and limits.
+          // ON DELETE CASCADE removes sessions, wallet, seeds (next one included), rounds, ledger
+          // and limits.
           await client.query('DELETE FROM users WHERE id = $1', [auth.userId]);
         });
         clearSessionCookie(ctx, reply);

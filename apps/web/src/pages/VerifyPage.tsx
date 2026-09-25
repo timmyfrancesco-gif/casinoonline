@@ -5,10 +5,13 @@ import {
   CLIENT_SEED_PATTERN,
   GAME_IDS,
   GAME_NAMES_IT,
+  IllegalBlackjackActionError,
+  IllegalVideoPokerActionError,
   SERVER_SEED_PATTERN,
   UNITS_PER_CHIP,
   VIDEO_POKER_HAND_NAMES_IT,
   hashServerSeed,
+  validateRouletteBet,
   verifyRound,
   type BlackjackAction,
   type GameId,
@@ -16,7 +19,7 @@ import {
   type VerifyInput,
   type VerifyResult,
 } from '@casino/engine';
-import type { RoundDetailResponse } from '@casino/shared';
+import { ROULETTE_MAX_BETS, type RoundDetailResponse } from '@casino/shared';
 import { useMe, useRoundDetail } from '../api/hooks.ts';
 import { errorMessage } from '../api/errors.ts';
 import { Alert } from '../components/Alert.tsx';
@@ -26,7 +29,8 @@ import { Spinner } from '../components/Spinner.tsx';
 import { ACTION_LABELS, OUTCOME_SHORT } from '../games/blackjack/labels.ts';
 import { COLOR_NAMES_IT, betLabel, numberColor, targetOf } from '../games/roulette/betBuilder.ts';
 import { SYMBOL_NAMES_IT, WIN_NAMES_IT } from '../games/slot/symbols.tsx';
-import { chipsLabel } from '../lib/format.ts';
+import { getCommitment } from '../lib/commitments.ts';
+import { chipsLabel, formatDateTimeLong } from '../lib/format.ts';
 import { usePageTitle } from '../lib/usePageTitle.ts';
 
 interface FormState {
@@ -67,6 +71,31 @@ const ACTION_ALIASES: Record<string, BlackjackAction> = {
   dividi: 'split',
 };
 
+/** Where the expected hash comes from: only a copy kept before the reveal proves the commitment. */
+export type HashOrigin =
+  { kind: 'local'; recordedAt: string } | { kind: 'server' } | { kind: 'user' };
+
+export interface ExpectedHash {
+  hash: string;
+  origin: HashOrigin;
+  /** The hash recorded by this browser differs from the one the server sends now. */
+  conflict: { recorded: string; recordedAt: string; server: string } | null;
+}
+
+/** Prefers the hash this browser recorded for the pair over the one the server sends now. */
+export function expectedHashFor(seedPairId: string | null, serverHash: string): ExpectedHash {
+  const local = seedPairId ? getCommitment(seedPairId) : null;
+  if (!local) return { hash: serverHash, origin: { kind: 'server' }, conflict: null };
+  return {
+    hash: local.hash,
+    origin: { kind: 'local', recordedAt: local.firstSeenAt },
+    conflict:
+      local.hash === serverHash.trim().toLowerCase()
+        ? null
+        : { recorded: local.hash, recordedAt: local.firstSeenAt, server: serverHash },
+  };
+}
+
 export function formFromRound(data: RoundDetailResponse): FormState {
   const f = data.round.fairness;
   const base: FormState = {
@@ -95,6 +124,29 @@ export function formFromRound(data: RoundDetailResponse): FormState {
   }
 }
 
+/** A validated bet reduced to its known fields (numbers sorted), in a fixed key order. */
+function canonicalBet(bet: RouletteBet): RouletteBet {
+  if ('numbers' in bet) {
+    return { type: bet.type, numbers: [...bet.numbers].sort((a, b) => a - b), amount: bet.amount };
+  }
+  if ('index' in bet) return { type: bet.type, index: bet.index, amount: bet.amount };
+  return { type: bet.type, amount: bet.amount };
+}
+
+/** Comparable form of the player's inputs (the server's JSON may order keys differently). */
+export function canonicalInput(input: VerifyInput): string {
+  switch (input.game) {
+    case 'roulette':
+      return JSON.stringify({ game: input.game, bets: input.bets.map(canonicalBet) });
+    case 'slot':
+      return JSON.stringify({ game: input.game, bet: input.bet });
+    case 'blackjack':
+      return JSON.stringify({ game: input.game, bet: input.bet, actions: input.actions });
+    case 'videopoker':
+      return JSON.stringify({ game: input.game, bet: input.bet, held: input.held.map(Boolean) });
+  }
+}
+
 /** Builds the engine input from the form, or returns an Italian error. */
 export function buildVerifyInput(form: FormState): { input: VerifyInput } | { error: string } {
   const chips = Number(form.bet.replace(',', '.'));
@@ -111,7 +163,16 @@ export function buildVerifyInput(form: FormState): { input: VerifyInput } | { er
       if (!Array.isArray(parsed) || parsed.length === 0) {
         return { error: 'Inserisci almeno una puntata della roulette.' };
       }
-      return { input: { game: 'roulette', bets: parsed as RouletteBet[] } };
+      if (parsed.length > ROULETTE_MAX_BETS) {
+        return { error: `Al massimo ${ROULETTE_MAX_BETS} puntate per giro.` };
+      }
+      const bets: RouletteBet[] = [];
+      for (const [i, raw] of parsed.entries()) {
+        const problem = validateRouletteBet(raw as RouletteBet);
+        if (problem) return { error: `Puntata ${i + 1}: ${problem}` };
+        bets.push(canonicalBet(raw as RouletteBet));
+      }
+      return { input: { game: 'roulette', bets } };
     }
     case 'slot':
       return betOk ? { input: { game: 'slot', bet } } : { error: 'Puntata non valida.' };
@@ -136,26 +197,57 @@ export function buildVerifyInput(form: FormState): { input: VerifyInput } | { er
   }
 }
 
-/** Compares the recomputed outcome with what the server recorded. */
+/** True when the form holds the recorded round's own inputs (else no comparison applies). */
+export function sameInputsAsRecorded(
+  data: RoundDetailResponse,
+  clientSeed: string,
+  nonce: number,
+  input: VerifyInput,
+): boolean {
+  const f = data.round.fairness;
+  return (
+    data.verifyInput !== null &&
+    f.clientSeed === clientSeed &&
+    f.nonce === nonce &&
+    canonicalInput(input) === canonicalInput(data.verifyInput)
+  );
+}
+
+/**
+ * Compares the recomputed outcome with what the server recorded: the round's details and the
+ * stake and payout actually booked (round.stake / round.payout).
+ */
 export function matchesRecorded(result: VerifyResult, data: RoundDetailResponse): boolean {
   const d = data.detail;
+  const { stake, payout } = data.round;
   switch (result.game) {
-    case 'roulette':
+    case 'roulette': {
+      const s = result.settlement;
       return (
         d.game === 'roulette' &&
-        d.settlement.number === result.settlement.number &&
-        d.settlement.totalWin === result.settlement.totalWin
+        d.settlement.number === s.number &&
+        d.settlement.totalWin === s.totalWin &&
+        d.settlement.totalBet === s.totalBet &&
+        d.settlement.bets.map((b) => b.win).join() === s.bets.map((b) => b.win).join() &&
+        s.totalBet === stake &&
+        s.totalWin === payout
       );
-    case 'slot':
+    }
+    case 'slot': {
+      const s = result.settlement;
       return (
         d.game === 'slot' &&
-        d.settlement.stops.join() === result.settlement.stops.join() &&
-        d.settlement.win === result.settlement.win
+        d.settlement.stops.join() === s.stops.join() &&
+        d.settlement.win === s.win &&
+        s.bet === stake &&
+        s.win === payout
       );
+    }
     case 'blackjack':
       return (
         d.game === 'blackjack' &&
-        (result.state.result?.totalPayout ?? -1) === data.round.payout &&
+        (result.state.result?.totalBet ?? -1) === stake &&
+        (result.state.result?.totalPayout ?? -1) === payout &&
         d.state.dealer.cards.join() === result.state.dealer.join() &&
         d.state.hands.map((h) => h.cards.join()).join('|') ===
           result.state.hands.map((h) => h.cards.join()).join('|')
@@ -164,9 +256,19 @@ export function matchesRecorded(result: VerifyResult, data: RoundDetailResponse)
       return (
         d.game === 'videopoker' &&
         d.state.hand.join() === result.state.hand.join() &&
-        (result.state.result?.payout ?? -1) === data.round.payout
+        result.state.bet === stake &&
+        (result.state.result?.payout ?? -1) === payout
       );
   }
+}
+
+const RECOMPUTE_ERROR = 'I dati inseriti non sono validi per questo gioco.';
+
+/** Italian text for an engine failure: its own message only for the known game rules. */
+function recomputeError(err: unknown): string {
+  return err instanceof IllegalBlackjackActionError || err instanceof IllegalVideoPokerActionError
+    ? `${RECOMPUTE_ERROR} ${err.message}`
+    : RECOMPUTE_ERROR;
 }
 
 function ResultView({ result }: { result: VerifyResult }) {
@@ -259,9 +361,33 @@ function ResultView({ result }: { result: VerifyResult }) {
 interface Outcome {
   hash: string;
   hashMatches: boolean | null;
+  hashOrigin: HashOrigin['kind'];
   result: VerifyResult | null;
   error: string | null;
-  recordedMatch: boolean | null;
+  /** Comparison with the recorded round; 'modified' when the inputs are not the recorded ones. */
+  recorded: 'match' | 'mismatch' | 'modified' | null;
+}
+
+function HashMatchBadge({ outcome }: { outcome: Outcome }) {
+  if (outcome.hashMatches === null) return <>Impronta non indicata</>;
+  if (!outcome.hashMatches) {
+    return <span className="badge badge-ko">✗ No, il seed non corrisponde</span>;
+  }
+  switch (outcome.hashOrigin) {
+    case 'local':
+      return <span className="badge badge-ok">✓ Sì, il seed è quello promesso</span>;
+    case 'user':
+      return <span className="badge badge-ok">✓ Sì, corrisponde all’impronta inserita</span>;
+    case 'server':
+      return (
+        <>
+          <span className="badge badge-ok">✓ Corrisponde all’impronta indicata ora dal server</span>{' '}
+          <span className="small muted">
+            (non registrata prima di giocare: vale come prova solo se l’avevi annotata tu)
+          </span>
+        </>
+      );
+  }
 }
 
 export function VerifyPage() {
@@ -271,6 +397,8 @@ export function VerifyPage() {
   const { data: me } = useMe();
   const detail = useRoundDetail(me ? roundId : undefined);
   const [form, setForm] = useState<FormState>(EMPTY);
+  const [hashOrigin, setHashOrigin] = useState<HashOrigin>({ kind: 'user' });
+  const [hashConflict, setHashConflict] = useState<ExpectedHash['conflict']>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const prefilledFor = useRef<string | null>(null);
@@ -280,11 +408,17 @@ export function VerifyPage() {
     const serverSeed = params.get('serverSeed');
     const clientSeed = params.get('clientSeed');
     if (!serverSeed && !clientSeed) return;
+    const serverHash = params.get('hash');
+    const expected = serverHash ? expectedHashFor(params.get('pair'), serverHash) : null;
+    if (expected) {
+      setHashOrigin(expected.origin);
+      setHashConflict(expected.conflict);
+    }
     setForm((f) => ({
       ...f,
       serverSeed: serverSeed ?? f.serverSeed,
       clientSeed: clientSeed ?? f.clientSeed,
-      expectedHash: params.get('hash') ?? f.expectedHash,
+      expectedHash: expected?.hash ?? f.expectedHash,
       nonce: params.get('nonce') ?? f.nonce,
     }));
   }, [params]);
@@ -292,23 +426,33 @@ export function VerifyPage() {
   useEffect(() => {
     if (!detail.data || prefilledFor.current === detail.data.round.id) return;
     prefilledFor.current = detail.data.round.id;
-    setForm(formFromRound(detail.data));
+    const f = detail.data.round.fairness;
+    const expected = expectedHashFor(f.seedPairId, f.serverSeedHash);
+    setHashOrigin(expected.origin);
+    setHashConflict(expected.conflict);
+    setForm({ ...formFromRound(detail.data), expectedHash: expected.hash });
     setOutcome(null);
   }, [detail.data]);
 
-  const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
+  const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
+    // A result on screen must always describe the data in the form.
+    setOutcome(null);
+    if (key === 'expectedHash') setHashOrigin({ kind: 'user' });
+  };
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setFormError(null);
+    setOutcome(null);
     const serverSeed = form.serverSeed.trim();
     const clientSeed = form.clientSeed.trim();
-    const nonce = Number(form.nonce);
+    const nonceText = form.nonce.trim();
+    const nonce = Number(nonceText);
     if (!serverSeed)
       return setFormError('Inserisci il seed del server (rivelato dopo la rotazione).');
     if (!clientSeed) return setFormError('Inserisci il seed client.');
-    if (!Number.isSafeInteger(nonce) || nonce < 0) {
+    if (nonceText === '' || !Number.isSafeInteger(nonce) || nonce < 0) {
       return setFormError('Il nonce deve essere un numero intero maggiore o uguale a 0.');
     }
     const built = buildVerifyInput(form);
@@ -321,18 +465,33 @@ export function VerifyPage() {
     try {
       result = verifyRound({ serverSeed, clientSeed, nonce }, built.input);
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      error = recomputeError(err);
     }
     const recorded =
       detail.data && detail.data.round.id === prefilledFor.current ? detail.data : null;
     setOutcome({
       hash,
       hashMatches: expected ? hash === expected : null,
+      hashOrigin: hashOrigin.kind,
       result,
       error,
-      recordedMatch: result && recorded ? matchesRecorded(result, recorded) : null,
+      recorded:
+        result && recorded?.verifyInput
+          ? sameInputsAsRecorded(recorded, clientSeed, nonce, built.input)
+            ? matchesRecorded(result, recorded)
+              ? 'match'
+              : 'mismatch'
+            : 'modified'
+          : null,
     });
   };
+
+  const hashHint =
+    hashOrigin.kind === 'local'
+      ? `Registrata da questo browser il ${formatDateTimeLong(hashOrigin.recordedAt)}, prima che il seed fosse rivelato.`
+      : hashOrigin.kind === 'server'
+        ? 'Fornita ora dal server insieme al seed: non registrata da questo browser prima di giocare.'
+        : 'Facoltativa: se la inserisci controlliamo che il seed rivelato corrisponda.';
 
   const seedWarning =
     form.serverSeed && !SERVER_SEED_PATTERN.test(form.serverSeed.trim())
@@ -352,6 +511,13 @@ export function VerifyPage() {
         rivelato e qui puoi ricalcolare la partita direttamente nel tuo browser, senza contattare il
         server.
       </p>
+      <p className="muted">
+        Il seed server di ogni nuova coppia è fissato prima che tu scelga il seed client: nel{' '}
+        <Link to="/profilo#seed">profilo</Link> trovi l’«Hash del prossimo seed server», che alla
+        rotazione diventa l’impronta della coppia attiva. Così il server non può scegliere il
+        proprio seed in base al tuo. Se ruoti i seed da questo browser, quell’hash viene registrato
+        e usato qui come impronta attesa.
+      </p>
 
       {roundId && !me && (
         <Alert tone="info">
@@ -363,6 +529,14 @@ export function VerifyPage() {
       )}
       {roundId && me && detail.isPending && <Spinner label="Caricamento della partita…" />}
       {detail.isError && <Alert tone="error">{errorMessage(detail.error)}</Alert>}
+      {hashConflict && (
+        <Alert tone="error" title="✗ Impronta diversa da quella registrata">
+          Il {formatDateTimeLong(hashConflict.recordedAt)} questo browser ha registrato per questa
+          coppia di seed l’impronta <span className="mono break">{hashConflict.recorded}</span>, ma
+          ora il server indica <span className="mono break">{hashConflict.server}</span>. Il seed
+          del server potrebbe essere stato sostituito: la verifica usa l’impronta registrata.
+        </Alert>
+      )}
       {detail.data && !detail.data.round.fairness.serverSeed && (
         <Alert tone="warning" title="Seed non ancora rivelato">
           Questa partita usa la coppia di seed attiva. Ruota i seed nel{' '}
@@ -410,7 +584,7 @@ export function VerifyPage() {
             onChange={(e) => update('expectedHash', e.target.value)}
             spellCheck={false}
             autoComplete="off"
-            hint="Facoltativa: se la inserisci controlliamo che il seed rivelato corrisponda."
+            hint={hashHint}
           />
           <Field
             label="Seed client"
@@ -506,23 +680,19 @@ export function VerifyPage() {
                 <div>
                   <dt>Corrisponde all’impronta?</dt>
                   <dd>
-                    {outcome.hashMatches === null ? (
-                      'Impronta non indicata'
-                    ) : outcome.hashMatches ? (
-                      <span className="badge badge-ok">✓ Sì, il seed è quello promesso</span>
-                    ) : (
-                      <span className="badge badge-ko">✗ No, il seed non corrisponde</span>
-                    )}
+                    <HashMatchBadge outcome={outcome} />
                   </dd>
                 </div>
-                {outcome.recordedMatch !== null && (
+                {outcome.recorded !== null && (
                   <div>
                     <dt>Coincide con l’esito registrato?</dt>
                     <dd>
-                      {outcome.recordedMatch ? (
+                      {outcome.recorded === 'match' ? (
                         <span className="badge badge-ok">✓ Sì, esito identico</span>
-                      ) : (
+                      ) : outcome.recorded === 'mismatch' ? (
                         <span className="badge badge-ko">✗ No, esito diverso</span>
+                      ) : (
+                        'Dati modificati: confronto con la partita registrata non applicabile.'
                       )}
                     </dd>
                   </div>

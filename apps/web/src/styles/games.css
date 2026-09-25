@@ -251,7 +251,16 @@
   border-radius: var(--radius-sm);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
+  line-height: 1.1;
   border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+/* Stacked under the number, like the R/N tags of the table. */
+.recent-color-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.85;
 }
 
 .recent-number:first-child {
@@ -518,10 +527,6 @@
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   gap: var(--space-5);
   align-items: start;
-}
-
-.vp-layout {
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
 }
 
 .vp-layout .paytable-panel {
@@ -855,6 +860,13 @@
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-2);
   justify-items: center;
+  /* Cards are sized from this row, not from the viewport, so five always fit side by side. */
+  container-type: inline-size;
+}
+
+.vp-cards .card-lg {
+  /* One fifth of the row, minus the gaps and the hold button padding (4px per side). */
+  --card-w: clamp(40px, calc((100cqi - 4 * var(--space-2)) / 5 - 8px), 96px);
 }
 
 .vp-card-slot {
@@ -886,6 +898,7 @@
   font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.08em;
+  white-space: nowrap;
   color: var(--on-felt-muted);
   min-height: 1.2em;
 }
@@ -920,6 +933,11 @@
 
   .vp-card-button {
     padding: 2px;
+  }
+
+  .hold-label {
+    font-size: 0.68rem;
+    letter-spacing: 0.02em;
   }
 
   .btn-action {

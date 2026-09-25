@@ -2,7 +2,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { errorResponse, mockFetch, renderRoute } from '../test/utils.tsx';
-import { RegisterPage, ageOn } from './RegisterPage.tsx';
+import { RegisterPage, ageOn, maxBirthDate } from './RegisterPage.tsx';
 
 async function fillForm(user: ReturnType<typeof userEvent.setup>, birthDate = '1990-05-01') {
   await user.type(screen.getByLabelText('Nome utente'), 'giulia_88');
@@ -69,10 +69,21 @@ describe('RegisterPage', () => {
   });
 
   it('computes the age in whole years', () => {
-    const today = new Date(2026, 8, 25);
+    const today = new Date('2026-09-25T12:00:00Z');
     expect(ageOn('2008-09-25', today)).toBe(18);
     expect(ageOn('2008-09-26', today)).toBe(17);
     expect(ageOn('2008-02-30', today)).toBeNull();
     expect(ageOn('abc', today)).toBeNull();
+  });
+
+  it('uses the Italian date like the server, whatever the browser time zone', () => {
+    // 23:30 on 24 September in Rome (CEST, UTC+2): still 17 there, even where it is already the 25th.
+    expect(ageOn('2008-09-25', new Date('2026-09-24T21:30:00Z'))).toBe(17);
+    expect(maxBirthDate(new Date('2026-09-24T21:30:00Z'))).toBe('2008-09-24');
+    // 00:30 on 25 September in Rome: 18 there, even where it is still the 24th (e.g. New York).
+    expect(ageOn('2008-09-25', new Date('2026-09-24T22:30:00Z'))).toBe(18);
+    expect(maxBirthDate(new Date('2026-09-24T22:30:00Z'))).toBe('2008-09-25');
+    // 29 February: the latest adult birth date is 28 February, MIN_AGE years earlier.
+    expect(maxBirthDate(new Date('2028-02-29T12:00:00Z'))).toBe('2010-02-28');
   });
 });

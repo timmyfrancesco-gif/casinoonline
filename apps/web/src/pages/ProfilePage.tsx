@@ -18,6 +18,7 @@ import { NetAmount } from '../components/Amount.tsx';
 import { Field } from '../components/Field.tsx';
 import { Modal } from '../components/Modal.tsx';
 import { PageLoader } from '../components/Spinner.tsx';
+import { randomClientSeed } from '../lib/clientSeed.ts';
 import { chipsLabel, formatDateTime, formatDateTimeLong, pluralize } from '../lib/format.ts';
 import { usePageTitle } from '../lib/usePageTitle.ts';
 import { useLeaveToLobby } from '../app/useSignOut.ts';
@@ -187,8 +188,17 @@ function SeedsSection() {
       return;
     }
     setSeedError(null);
-    rotate.mutate(value ? { clientSeed: value } : {}, { onSuccess: () => setClientSeed('') });
+    // Always a client seed chosen on this side: a server-generated one would let the server
+    // pick both inputs of the HMAC. The next-seed hash on screen binds the server to that seed.
+    rotate.mutate(
+      {
+        clientSeed: value || randomClientSeed(),
+        nextServerSeedHash: query.data?.next.serverSeedHash,
+      },
+      { onSuccess: () => setClientSeed('') },
+    );
   };
+  const promised = rotate.isSuccess ? rotate.variables.nextServerSeedHash : undefined;
 
   return (
     <section className="panel" aria-labelledby="seed-title" id="seed">
@@ -198,7 +208,9 @@ function SeedsSection() {
       <p>
         Ogni partita usa il seed del server, il tuo seed client e un nonce che cresce di 1 a ogni
         partita. Del seed del server vedi solo l’impronta: ruotando i seed viene rivelato e puoi{' '}
-        <Link to="/verifica">verificare</Link> tutte le partite giocate con quella coppia.
+        <Link to="/verifica">verificare</Link> tutte le partite giocate con quella coppia. Anche il
+        seed server della coppia successiva è già fissato: ne vedi l’hash prima di scegliere il
+        nuovo seed client.
       </p>
       {query.isPending ? (
         <PageLoader />
@@ -221,6 +233,19 @@ function SeedsSection() {
               <dd className="mono">{query.data.active.nextNonce}</dd>
             </div>
           </dl>
+          <h3 className="panel-subtitle">Prossima coppia</h3>
+          <dl className="kv-list">
+            <div>
+              <dt>Hash del prossimo seed server</dt>
+              <dd className="mono">{query.data.next.serverSeedHash}</dd>
+            </div>
+          </dl>
+          <p className="small muted">
+            Il seed server della prossima coppia è stato generato in anticipo e non può più
+            cambiare. Alla rotazione diventa il seed della coppia attiva, con il seed client che
+            scegli ora: la sua impronta deve coincidere con questo hash, quindi il server non può
+            scegliere il proprio seed dopo aver visto il tuo.
+          </p>
           <form className="form form-inline" onSubmit={onRotate} noValidate>
             <Field
               label="Nuovo seed client (facoltativo)"
@@ -229,19 +254,39 @@ function SeedsSection() {
               maxLength={64}
               autoComplete="off"
               spellCheck={false}
-              hint="Lascia vuoto per generarne uno casuale."
+              hint="Se lo lasci vuoto ne generiamo uno casuale nel tuo browser."
               error={seedError}
             />
             <button type="submit" className="btn btn-primary" disabled={rotate.isPending}>
               Ruota i seed e rivela quello attuale
             </button>
           </form>
-          {rotate.isError && <Alert tone="error">{errorMessage(rotate.error)}</Alert>}
+          {rotate.isError && (
+            <Alert tone="error">
+              {errorCode(rotate.error) === 'CONFLICT'
+                ? 'I seed sono stati ruotati nel frattempo, ad esempio da un’altra scheda: controlla il nuovo hash del prossimo seed server e riprova.'
+                : errorMessage(rotate.error)}
+            </Alert>
+          )}
           {rotate.isSuccess && query.data.revealed[0] && (
             <Alert tone="success" title="Seed rivelato">
               <span className="mono break">{query.data.revealed[0].serverSeed}</span>
             </Alert>
           )}
+          {promised &&
+            (rotate.data?.active.serverSeedHash === promised ? (
+              <Alert tone="success">
+                La nuova coppia attiva usa il seed server annunciato: la sua impronta coincide con
+                l’hash mostrato prima della rotazione.
+              </Alert>
+            ) : (
+              <Alert tone="error" title="✗ Seed server diverso da quello annunciato">
+                Prima della rotazione il server aveva annunciato l’hash{' '}
+                <span className="mono break">{promised}</span>, ma la nuova coppia attiva ha
+                l’impronta <span className="mono break">{rotate.data?.active.serverSeedHash}</span>.
+                La verifica delle sue partite userà l’hash annunciato.
+              </Alert>
+            ))}
 
           <h3 className="panel-subtitle">Coppie rivelate</h3>
           {query.data.revealed.length === 0 ? (
@@ -253,6 +298,8 @@ function SeedsSection() {
                   serverSeed: pair.serverSeed,
                   clientSeed: pair.clientSeed,
                   hash: pair.serverSeedHash,
+                  // The verifier prefers the hash this browser recorded for the pair.
+                  pair: pair.id,
                 });
                 return (
                   <li key={pair.id} className="revealed-item">
