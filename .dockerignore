@@ -1,0 +1,25 @@
+# Build context for the Dockerfile: sources and manifests only.
+# Dependencies and build outputs are recreated inside the image.
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/*.log
+playwright-report
+test-results
+e2e
+docs
+.github
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Never send secrets to the build context.
+.env
+.env.*
+!.env.example

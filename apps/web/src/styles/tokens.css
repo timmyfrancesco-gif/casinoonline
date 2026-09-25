@@ -1,0 +1,141 @@
+/* Design tokens. Dark "green felt + brass" is the default; [data-theme='light'] overrides. */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0a231a;
+  --bg-elev: #0e2f23;
+  --surface: #113a2b;
+  --surface-2: #164634;
+  --surface-3: #1b5540;
+  --border: #2f6b52;
+  --border-strong: #4f8d71;
+
+  --text: #f4efe1;
+  --text-muted: #c4d0c2;
+  --text-faint: #9fb3a6;
+
+  --felt: #145038;
+  --felt-dark: #0d3a28;
+  --felt-light: #1d6a4b;
+  --felt-line: rgba(244, 239, 225, 0.72);
+  --on-felt: #f7f2e4;
+  --on-felt-muted: #d3dccf;
+
+  --brass: #d9b76a;
+  --brass-strong: #ecd08f;
+  --brass-dark: #a8843d;
+  --on-brass: #20190b;
+
+  --link: #f1d58f;
+  --link-hover: #ffe7ad;
+  --focus: #ffd966;
+  --focus-halo: rgba(0, 0, 0, 0.75);
+
+  --positive: #8fe3aa;
+  --negative: #ffa191;
+  --danger-solid: #b3261e;
+  --on-danger: #ffffff;
+
+  --alert-error-bg: #4e1b17;
+  --alert-error-border: #d0584b;
+  --alert-success-bg: #163f27;
+  --alert-success-border: #4fae73;
+  --alert-warning-bg: #45360f;
+  --alert-warning-border: #d6a93a;
+  --alert-info-bg: #123447;
+  --alert-info-border: #4d97c4;
+
+  --pocket-red: #b3261e;
+  --pocket-black: #19191d;
+  --pocket-green: #17774a;
+  --on-pocket: #ffffff;
+
+  --card-face: #fbf8f0;
+  --card-edge: #d8d0bd;
+  --card-red: #b3261e;
+  --card-black: #16161a;
+  --card-back-1: #7d1f1a;
+  --card-back-2: #942d24;
+
+  --chip-1-bg: #ece7da;
+  --chip-1-fg: #1f1f1f;
+  --chip-5-bg: #b3261e;
+  --chip-5-fg: #ffffff;
+  --chip-25-bg: #17774a;
+  --chip-25-fg: #ffffff;
+  --chip-100-bg: #1b1b1f;
+  --chip-100-fg: #ffffff;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.5);
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --font-sans:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  --font-serif: Georgia, 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --content-max: 1180px;
+  --header-h: 64px;
+  --touch: 44px;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f4efe3;
+  --bg-elev: #fbf8f1;
+  --surface: #ffffff;
+  --surface-2: #f5f0e4;
+  --surface-3: #ebe3d1;
+  --border: #d5cab2;
+  --border-strong: #9f9173;
+
+  --text: #1b2820;
+  --text-muted: #4a584e;
+  --text-faint: #5f6c63;
+
+  --felt: #1b6446;
+  --felt-dark: #145038;
+  --felt-light: #237a56;
+
+  --brass: #7d5a17;
+  --brass-strong: #5f430d;
+  --brass-dark: #a07a2c;
+  --on-brass: #ffffff;
+
+  --link: #145f3f;
+  --link-hover: #0c4029;
+  --focus: #0b4fb3;
+  --focus-halo: rgba(255, 255, 255, 0.9);
+
+  --positive: #11693a;
+  --negative: #a52a1f;
+
+  --alert-error-bg: #fbe7e4;
+  --alert-error-border: #c0392b;
+  --alert-success-bg: #e3f4e8;
+  --alert-success-border: #2e8b57;
+  --alert-warning-bg: #fdf3d8;
+  --alert-warning-border: #b7860b;
+  --alert-info-bg: #e3f0f8;
+  --alert-info-border: #2f7fb0;
+
+  --shadow-sm: 0 1px 2px rgba(40, 30, 10, 0.12);
+  --shadow: 0 8px 24px rgba(40, 30, 10, 0.12);
+  --shadow-lg: 0 18px 48px rgba(40, 30, 10, 0.22);
+}

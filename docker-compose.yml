@@ -1,0 +1,57 @@
+# Production-like local stack: PostgreSQL 16 + the app image (API and web on one origin).
+#
+#   docker compose up --build        ->  http://localhost:3000
+#   docker compose down              (add -v to also delete the database volume)
+#
+# Secrets and settings are read from the shell environment or from a `.env` file next to this
+# file (git-ignored). Variables use the CASINO_ prefix so they never collide with the
+# development `.env` (APP_ORIGIN=http://localhost:5173 there would break the CSRF check here):
+#
+#   POSTGRES_PASSWORD      database password (the only secret). Default "casino" is for local
+#                          use only: the database port is not published outside this network.
+#   CASINO_ORIGIN          public origin(s) of the site, comma separated (CSRF Origin check)
+#   CASINO_COOKIE_SECURE   true when the site is served over HTTPS (Secure cookie, HSTS)
+#   CASINO_TRUST_PROXY     1 (hop count) behind one reverse proxy, false when exposed directly
+#   CASINO_LOG_LEVEL       fatal | error | warn | info | debug | trace | silent
+
+name: casinoonline
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: casino
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-casino}
+      POSTGRES_DB: casino
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U casino -d casino']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  app:
+    build: .
+    image: casinoonline:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://casino:${POSTGRES_PASSWORD:-casino}@db:5432/casino
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: '3000'
+      APP_ORIGIN: ${CASINO_ORIGIN:-http://localhost:3000,http://127.0.0.1:3000}
+      # Plain HTTP on localhost: Secure cookies would not be sent back. Set true behind HTTPS.
+      COOKIE_SECURE: ${CASINO_COOKIE_SECURE:-false}
+      TRUST_PROXY: ${CASINO_TRUST_PROXY:-false}
+      LOG_LEVEL: ${CASINO_LOG_LEVEL:-info}
+      SERVE_WEB_DIST: /app/web
+    ports:
+      - '3000:3000'
+    restart: unless-stopped
+
+volumes:
+  pgdata:

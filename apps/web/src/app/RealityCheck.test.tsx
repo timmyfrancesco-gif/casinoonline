@@ -1,0 +1,45 @@
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it } from 'vitest';
+import { ME, RG, errorResponse, jsonResponse, mockFetch, renderRoute } from '../test/utils.tsx';
+import { RealityCheck, nextRealityCheckDue } from './RealityCheck.tsx';
+
+const MIN = 60_000;
+
+describe('nextRealityCheckDue', () => {
+  it('returns the next multiple of the interval after the acknowledged time', () => {
+    expect(nextRealityCheckDue(0, 30 * MIN)).toBe(30 * MIN);
+    expect(nextRealityCheckDue(31 * MIN, 30 * MIN)).toBe(60 * MIN);
+    expect(nextRealityCheckDue(30 * MIN, 15 * MIN)).toBe(45 * MIN);
+  });
+});
+
+describe('RealityCheck', () => {
+  it('shows a blocking dialog with time, rounds and net result, then lets the player continue', async () => {
+    // Session started almost 15 minutes ago: the check is due in ~20 ms.
+    const startedAt = Date.now() - (15 * MIN - 20);
+    const rg = () => ({
+      ...RG,
+      realityCheckMinutes: 15 as const,
+      session: { ...RG.session, elapsedMs: Date.now() - startedAt, rounds: 12, net: -2_550 },
+    });
+    mockFetch(({ url }) => {
+      if (url === '/api/auth/me') return jsonResponse(ME);
+      if (url === '/api/rg') return jsonResponse(rg());
+      return errorResponse(404, 'NOT_FOUND');
+    });
+    const user = userEvent.setup({ delay: null });
+    renderRoute(<RealityCheck />);
+
+    const dialog = await screen.findByRole('alertdialog', { name: 'Promemoria di gioco' });
+    expect(dialog).toHaveTextContent('15 min');
+    expect(dialog).toHaveTextContent('12 partite');
+    expect(dialog).toHaveTextContent('−25,50');
+    expect(screen.getByRole('button', { name: 'Esci' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Continua a giocare' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    const stored = Object.keys(sessionStorage).find((k) => k.startsWith('casino-rc-ack:'));
+    expect(Number(sessionStorage.getItem(stored!))).toBeGreaterThanOrEqual(15 * MIN - 20);
+  });
+});

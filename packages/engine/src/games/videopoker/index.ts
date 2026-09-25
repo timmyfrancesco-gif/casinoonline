@@ -17,8 +17,10 @@
  *   ROYAL_FLUSH = 10-J-Q-K-A suited. STRAIGHT_FLUSH excludes the royal.
  */
 import type { Amount } from '../../money.ts';
-import type { CardCode } from '../../cards.ts';
-import type { Rng } from '../../fair/rng.ts';
+import { isCardCode, orderedShoe, type CardCode } from '../../cards.ts';
+import { shuffleInPlace, type Rng } from '../../fair/rng.ts';
+import { compareHoldTotals, holdTotals } from './analysis.ts';
+import { evaluateRankIndex } from './evaluate.ts';
 
 export const POKER_HAND_RANKS = [
   'ROYAL_FLUSH',
@@ -107,51 +109,129 @@ export class IllegalVideoPokerActionError extends Error {
   }
 }
 
+/** Multiples indexed like POKER_HAND_RANKS (for the fast evaluator). */
+const PAY_BY_INDEX: readonly number[] = POKER_HAND_RANKS.map((rank) => VIDEO_POKER_PAYTABLE[rank]);
+
+/** True when `cards` holds `count` distinct valid card codes. */
+function areDistinctCards(cards: unknown, count: number): cards is CardCode[] {
+  if (!Array.isArray(cards) || cards.length !== count) return false;
+  // Two 26-bit masks keep the duplicate check within 32-bit integer operations.
+  let low = 0;
+  let high = 0;
+  for (const code of cards) {
+    if (!isCardCode(code)) return false;
+    if (code < 26) {
+      const bit = 1 << code;
+      if (low & bit) return false;
+      low |= bit;
+    } else {
+      const bit = 1 << (code - 26);
+      if (high & bit) return false;
+      high |= bit;
+    }
+  }
+  return true;
+}
+
 /** Evaluates exactly 5 distinct cards. */
 export function evaluatePokerHand(cards: CardCode[]): PokerHandRank {
-  void cards;
-  throw new Error('not implemented');
+  if (!areDistinctCards(cards, 5)) {
+    throw new RangeError('Servono esattamente 5 carte distinte.');
+  }
+  return POKER_HAND_RANKS[
+    evaluateRankIndex(cards[0]!, cards[1]!, cards[2]!, cards[3]!, cards[4]!)
+  ]!;
+}
+
+function assertBet(bet: Amount): void {
+  if (!Number.isSafeInteger(bet) || bet <= 0) {
+    throw new RangeError(`Puntata non valida: ${bet}`);
+  }
 }
 
 export function videoPokerDeal(bet: Amount, rng: Rng): VideoPokerState {
-  void bet;
-  void rng;
-  throw new Error('not implemented');
+  assertBet(bet);
+  return videoPokerDealFromDeck(bet, shuffleInPlace(rng, orderedShoe(1)));
 }
 
 /** Deals from a given 52-card deck order (tests). */
 export function videoPokerDealFromDeck(bet: Amount, deck: CardCode[]): VideoPokerState {
-  void bet;
-  void deck;
-  throw new Error('not implemented');
+  assertBet(bet);
+  if (!areDistinctCards(deck, 52)) {
+    throw new RangeError('Il mazzo deve contenere le 52 carte, una volta ciascuna.');
+  }
+  return {
+    bet,
+    deck: deck.slice(),
+    hand: deck.slice(0, 5),
+    held: null,
+    phase: 'hold',
+    step: 0,
+    result: null,
+  };
+}
+
+function isHoldMask(held: unknown): held is boolean[] {
+  return Array.isArray(held) && held.length === 5 && held.every((h) => typeof h === 'boolean');
 }
 
 /** Pure: returns the settled state. held must have length 5. Throws IllegalVideoPokerActionError if not in 'hold' phase. */
 export function videoPokerDraw(state: VideoPokerState, held: boolean[]): VideoPokerState {
-  void state;
-  void held;
-  throw new Error('not implemented');
+  if (state.phase !== 'hold') {
+    throw new IllegalVideoPokerActionError('La mano è già stata giocata.');
+  }
+  if (!isHoldMask(held)) {
+    throw new IllegalVideoPokerActionError(
+      'Indica per ciascuna delle 5 carte se tenerla o cambiarla.',
+    );
+  }
+  let next = 5;
+  const hand = state.hand.map((card, i) => (held[i] ? card : state.deck[next++]!));
+  const rank = evaluatePokerHand(hand);
+  const multiplier = VIDEO_POKER_PAYTABLE[rank];
+  return {
+    bet: state.bet,
+    deck: state.deck.slice(),
+    hand,
+    held: held.slice(),
+    phase: 'settled',
+    step: state.step + 1,
+    result: { rank, multiplier, payout: state.bet * multiplier },
+  };
 }
 
 export function videoPokerPublicView(state: VideoPokerState): VideoPokerPublicState {
-  void state;
-  throw new Error('not implemented');
+  return {
+    bet: state.bet,
+    phase: state.phase,
+    step: state.step,
+    hand: state.hand.slice(),
+    dealt: state.deck.slice(0, 5),
+    held: state.held === null ? null : state.held.slice(),
+    currentRank: evaluatePokerHand(state.hand),
+    result: state.result === null ? null : { ...state.result },
+  };
 }
 
 /** Re-plays a round from its RNG and the hold mask (verification). */
 export function videoPokerReplay(bet: Amount, rng: Rng, held: boolean[]): VideoPokerState {
-  void bet;
-  void rng;
-  void held;
-  throw new Error('not implemented');
+  return videoPokerDraw(videoPokerDeal(bet, rng), held);
 }
 
 /**
  * Exact expected return (multiple of the bet) for every one of the 32 hold masks of a
  * 5-card hand, using the remaining 47 cards. Returns masks sorted by EV descending.
  * Used for the optional "suggerimento" and must run in the browser in well under 2 s.
+ * Ties are broken by holding more cards, then by mask order.
  */
 export function videoPokerHoldAnalysis(hand: CardCode[]): { held: boolean[]; ev: number }[] {
-  void hand;
-  throw new Error('not implemented');
+  if (!areDistinctCards(hand, 5)) {
+    throw new RangeError('Servono esattamente 5 carte distinte.');
+  }
+  return holdTotals(hand, PAY_BY_INDEX)
+    .sort(compareHoldTotals)
+    .map(({ mask, total, draws }) => ({
+      held: [0, 1, 2, 3, 4].map((i) => (mask & (1 << i)) !== 0),
+      ev: total / draws,
+    }));
 }

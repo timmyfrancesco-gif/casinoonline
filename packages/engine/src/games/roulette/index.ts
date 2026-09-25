@@ -93,38 +93,210 @@ export interface RouletteSettlement {
   totalWin: Amount;
 }
 
+/** Italian names of the bet types (UI labels and validation messages). */
+export const ROULETTE_BET_NAMES_IT: Record<RouletteBetType, string> = {
+  straight: 'pieno',
+  split: 'cavallo',
+  street: 'terzina',
+  trio: 'terzina con lo zero',
+  corner: 'carré',
+  basket: 'quartina (0-1-2-3)',
+  sixline: 'sestina',
+  dozen: 'dozzina',
+  column: 'colonna',
+  red: 'rosso',
+  black: 'nero',
+  even: 'pari',
+  odd: 'dispari',
+  low: 'manque (1-18)',
+  high: 'passe (19-36)',
+};
+
+/** How many numbers each inside bet type covers. */
+export const ROULETTE_INSIDE_SIZES: Record<RouletteInsideType, number> = {
+  straight: 1,
+  split: 2,
+  street: 3,
+  trio: 3,
+  corner: 4,
+  basket: 4,
+  sixline: 6,
+};
+
+const RED_SET: ReadonlySet<number> = new Set(RED_NUMBERS);
+
+function isPocket(n: unknown): n is number {
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 36;
+}
+
 export function rouletteColor(n: number): RouletteColor {
-  void n;
-  throw new Error('not implemented');
+  if (!isPocket(n)) throw new RangeError(`Numero della roulette non valido: ${n}`);
+  if (n === 0) return 'green';
+  return RED_SET.has(n) ? 'red' : 'black';
+}
+
+function range(from: number, to: number): number[] {
+  const out: number[] = [];
+  for (let n = from; n <= to; n++) out.push(n);
+  return out;
+}
+
+function buildInsideCombinations(): Record<RouletteInsideType, number[][]> {
+  const straight = range(0, 36).map((n) => [n]);
+  const split: number[][] = [
+    [0, 1],
+    [0, 2],
+    [0, 3],
+  ];
+  for (let n = 1; n <= 36; n++) {
+    if (n % 3 !== 0) split.push([n, n + 1]);
+    if (n + 3 <= 36) split.push([n, n + 3]);
+  }
+  const street: number[][] = [];
+  const sixline: number[][] = [];
+  for (let first = 1; first <= 34; first += 3) {
+    street.push([first, first + 1, first + 2]);
+    if (first + 5 <= 36) sixline.push(range(first, first + 5));
+  }
+  const corner: number[][] = [];
+  for (let n = 1; n + 4 <= 36; n++) {
+    if (n % 3 !== 0) corner.push([n, n + 1, n + 3, n + 4]);
+  }
+  const byLex = (a: number[], b: number[]): number => {
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      if (a[i] !== b[i]) return a[i]! - b[i]!;
+    }
+    return a.length - b.length;
+  };
+  return {
+    straight,
+    split: split.sort(byLex),
+    street,
+    trio: [
+      [0, 1, 2],
+      [0, 2, 3],
+    ],
+    corner: corner.sort(byLex),
+    basket: [[0, 1, 2, 3]],
+    sixline,
+  };
+}
+
+const INSIDE_COMBINATIONS = buildInsideCombinations();
+
+const comboKey = (sorted: readonly number[]): string => sorted.join(',');
+
+const INSIDE_KEYS = {} as Record<RouletteInsideType, ReadonlySet<string>>;
+for (const type of ROULETTE_INSIDE_TYPES) {
+  INSIDE_KEYS[type] = new Set(INSIDE_COMBINATIONS[type].map(comboKey));
+}
+
+const INSIDE_ERRORS: Record<RouletteInsideType, string> = {
+  straight: 'Il pieno deve coprire un numero da 0 a 36.',
+  split: 'I due numeri del cavallo devono essere adiacenti sul tappeto.',
+  street: 'La terzina deve coprire una riga del tappeto (es. 1-2-3).',
+  trio: 'La terzina con lo zero può essere solo 0-1-2 oppure 0-2-3.',
+  corner: 'Il carré deve coprire quattro numeri che formano un quadrato sul tappeto.',
+  basket: 'La quartina deve coprire esattamente 0-1-2-3.',
+  sixline: 'La sestina deve coprire due righe adiacenti del tappeto (es. 1-6).',
+};
+
+function includesValue<T extends string>(list: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && (list as readonly string[]).includes(value);
 }
 
 /** Returns null when valid, or an Italian error message describing the problem. Validates shape, numbers and amount (positive safe integer). */
 export function validateRouletteBet(bet: RouletteBet): string | null {
-  void bet;
-  throw new Error('not implemented');
+  if (typeof bet !== 'object' || bet === null || Array.isArray(bet)) {
+    return 'Puntata non valida.';
+  }
+  const raw = bet as unknown as Record<string, unknown>;
+  const type = raw.type;
+  if (!includesValue(ROULETTE_BET_TYPES, type)) return 'Tipo di puntata sconosciuto.';
+  const amount = raw.amount;
+  if (typeof amount !== 'number' || !Number.isSafeInteger(amount) || amount <= 0) {
+    return "L'importo della puntata deve essere un numero intero positivo.";
+  }
+  if (includesValue(ROULETTE_INSIDE_TYPES, type)) {
+    const numbers = raw.numbers;
+    if (!Array.isArray(numbers)) return 'La puntata deve indicare i numeri coperti.';
+    if (!numbers.every(isPocket)) return 'I numeri devono essere interi da 0 a 36.';
+    const size = ROULETTE_INSIDE_SIZES[type];
+    if (numbers.length !== size) {
+      return size === 1
+        ? 'Il pieno richiede esattamente 1 numero.'
+        : `La puntata "${ROULETTE_BET_NAMES_IT[type]}" richiede esattamente ${size} numeri.`;
+    }
+    if (new Set(numbers).size !== numbers.length) return 'La puntata contiene numeri ripetuti.';
+    const sorted = [...numbers].sort((a, b) => a - b);
+    if (!INSIDE_KEYS[type].has(comboKey(sorted))) return INSIDE_ERRORS[type];
+    return null;
+  }
+  if (includesValue(ROULETTE_INDEXED_TYPES, type)) {
+    const index = raw.index;
+    if (index !== 1 && index !== 2 && index !== 3) {
+      return `L'indice della ${ROULETTE_BET_NAMES_IT[type]} deve essere 1, 2 o 3.`;
+    }
+  }
+  return null;
 }
+
+const EVEN_MONEY_NUMBERS: Record<RouletteEvenType, readonly number[]> = {
+  red: [...RED_NUMBERS].sort((a, b) => a - b),
+  black: range(1, 36).filter((n) => !RED_SET.has(n)),
+  even: range(1, 36).filter((n) => n % 2 === 0),
+  odd: range(1, 36).filter((n) => n % 2 === 1),
+  low: range(1, 18),
+  high: range(19, 36),
+};
 
 /** Numbers covered by a (valid) bet, sorted ascending. */
 export function coveredNumbers(bet: RouletteBet): number[] {
-  void bet;
-  throw new Error('not implemented');
+  switch (bet.type) {
+    case 'dozen': {
+      const first = (bet.index - 1) * 12 + 1;
+      return range(first, first + 11);
+    }
+    case 'column':
+      return range(1, 36).filter((n) => (n - bet.index) % 3 === 0);
+    case 'red':
+    case 'black':
+    case 'even':
+    case 'odd':
+    case 'low':
+    case 'high':
+      return [...EVEN_MONEY_NUMBERS[bet.type]];
+    default:
+      return [...bet.numbers].sort((a, b) => a - b);
+  }
 }
 
 /** Draws the winning pocket: exactly one rng.int(37) call. */
 export function spinRoulette(rng: Rng): number {
-  void rng;
-  throw new Error('not implemented');
+  return rng.int(37);
+}
+
+function copyBet(bet: RouletteBet): RouletteBet {
+  return 'numbers' in bet ? { ...bet, numbers: [...bet.numbers] } : { ...bet };
 }
 
 /** Settles already-validated bets against the winning number. */
 export function settleRoulette(bets: RouletteBet[], number: number): RouletteSettlement {
-  void bets;
-  void number;
-  throw new Error('not implemented');
+  const color = rouletteColor(number);
+  let totalBet = 0;
+  let totalWin = 0;
+  const results: RouletteBetResult[] = bets.map((bet) => {
+    const win = coveredNumbers(bet).includes(number)
+      ? bet.amount * (ROULETTE_PAYOUTS[bet.type] + 1)
+      : 0;
+    totalBet += bet.amount;
+    totalWin += win;
+    return { bet: copyBet(bet), win };
+  });
+  return { number, color, bets: results, totalBet, totalWin };
 }
 
 /** Every valid combination of numbers for an inside bet type (sorted arrays), useful for the UI and tests. */
 export function validInsideCombinations(type: RouletteInsideType): number[][] {
-  void type;
-  throw new Error('not implemented');
+  return INSIDE_COMBINATIONS[type].map((combo) => [...combo]);
 }
