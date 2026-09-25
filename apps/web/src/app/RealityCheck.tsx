@@ -33,8 +33,16 @@ export function RealityCheck() {
   const rg = rgQuery.data;
   const intervalMs = (rg?.realityCheckMinutes ?? 30) * 60_000;
   const sessionKey = rg ? `${ACK_PREFIX}${rg.session.startedAt}` : null;
-  // Session start on the client clock (elapsedMs avoids clock skew with the server).
-  const startClient = rg ? rgQuery.dataUpdatedAt - rg.session.elapsedMs : null;
+  // Session start on the client clock (elapsedMs avoids clock skew with the server). It is
+  // anchored once per session: re-deriving it on every refetch would shift it by network
+  // latency, and an acknowledged threshold measured against the old anchor would then point
+  // to the wrong next check.
+  const fetchedStart = rg ? rgQuery.dataUpdatedAt - rg.session.elapsedMs : null;
+  const [anchor, setAnchor] = useState<{ key: string; start: number } | null>(null);
+  if (sessionKey !== null && fetchedStart !== null && anchor?.key !== sessionKey) {
+    setAnchor({ key: sessionKey, start: fetchedStart });
+  }
+  const startClient = anchor !== null && anchor.key === sessionKey ? anchor.start : fetchedStart;
   const { refetch } = rgQuery;
 
   useEffect(() => {

@@ -118,6 +118,12 @@ test('autoesclusione: nessuna nuova puntata, ma la mano aperta si può completar
 test('reality check: promemoria modale ogni 15 minuti', async ({ page }) => {
   // Fake timers, installed before the app loads: the 15 minutes are fast-forwarded.
   await page.clock.install();
+  // Some latency on /api/rg: a refetch that lands between «Continua» and the next fast-forward
+  // must not move the session anchor (regression seen on CI runners).
+  await page.route('**/api/rg', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await route.continue();
+  });
   await register(page, 'promemoria');
 
   await page.goto('/gioco-responsabile');
